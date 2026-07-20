@@ -36,19 +36,15 @@ val bottomTabs = listOf(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
-    activeAccent: AppThemeAccent = AppThemeAccent.NEON_LIME,
+    activeAccent: AppThemeAccent = AppThemeAccent.NEON_GECKO,
     onAccentChange: (AppThemeAccent) -> Unit = {}
 ) {
     var selectedTabIndex by remember { mutableIntStateOf(0) }
     val custom = LocalCustomColors.current
 
-    // Active detail item state
     var selectedMediaForDetail by remember { mutableStateOf<MediaItem?>(null) }
-    
-    // Active player item state
     var selectedMediaForPlayer by remember { mutableStateOf<MediaItem?>(null) }
 
-    // Interactive My List state
     val myListState = remember { mutableStateListOf<MediaItem>().apply { addAll(MockDataRepository.drakorList.take(1)) } }
 
     fun toggleMyList(media: MediaItem) {
@@ -60,7 +56,6 @@ fun MainScreen(
         }
     }
 
-    // Fullscreen Player View
     if (selectedMediaForPlayer != null) {
         NetflixMediaPlayerScreen(
             media = selectedMediaForPlayer!!,
@@ -122,7 +117,6 @@ fun MainScreen(
                 )
             }
 
-            // Slide-up Netflix Detail Modal Sheet
             selectedMediaForDetail?.let { media ->
                 MediaDetailSheet(
                     media = media,

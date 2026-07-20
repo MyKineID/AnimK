@@ -21,7 +21,7 @@ class MainActivity : ComponentActivity() {
         enableMaxRefreshRate()
 
         setContent {
-            var activeThemeAccent by remember { mutableStateOf(AppThemeAccent.NEON_LIME) }
+            var activeThemeAccent by remember { mutableStateOf(AppThemeAccent.NEON_GECKO) }
 
             AnimKTheme(accent = activeThemeAccent) {
                 MainScreen(
