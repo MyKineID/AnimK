@@ -27,13 +27,22 @@ jobs:
 
       - run: chmod +x gradlew
 
-      - run: ./gradlew assembleDebug --stacktrace --no-daemon 2>&1 | tee build-log.txt
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --no-daemon 2>&1 | tee build-log.txt
+
+      - name: List APK output
+        run: |
+          echo "=== APK files ==="
+          find app/build/outputs -type f -name "*.apk" 2>/dev/null || echo "No APK found in app/build/outputs"
+          echo "=== Full build output ==="
+          find app/build/outputs -type f 2>/dev/null || echo "No outputs directory"
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: AnimK-APK
           path: |
-            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/**/*.apk
             build-log.txt
           retention-days: 7
+          if-no-files-found: warn
