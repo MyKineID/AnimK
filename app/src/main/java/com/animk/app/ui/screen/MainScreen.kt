@@ -2,95 +2,133 @@ package com.animk.app.ui.screen
 
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Movie
-import androidx.compose.material.icons.filled.Tv
-import androidx.compose.material.icons.outlined.Movie
-import androidx.compose.material.icons.outlined.Tv
-import androidx.compose.material.icons.outlined.VideoLibrary
-import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.animk.app.data.model.MediaItem
+import com.animk.app.data.repository.MockDataRepository
+import com.animk.app.ui.component.MediaDetailSheet
 import com.animk.app.ui.theme.LocalCustomColors
 
-data class BottomTab(val label: String, val selectedIcon: ImageVector, val unselectedIcon: ImageVector)
+data class BottomNavTab(
+    val label: String,
+    val selectedIcon: ImageVector,
+    val unselectedIcon: ImageVector
+)
 
-val tabs = listOf(
-    BottomTab("Anime", Icons.Filled.Tv, Icons.Outlined.Tv),
-    BottomTab("Donghua", Icons.Filled.Movie, Icons.Outlined.Movie),
-    BottomTab("Drakor", Icons.Filled.VideoLibrary, Icons.Outlined.VideoLibrary),
+val bottomTabs = listOf(
+    BottomNavTab("Home", Icons.Filled.Home, Icons.Outlined.Home),
+    BottomNavTab("Search", Icons.Filled.Search, Icons.Outlined.Search),
+    BottomNavTab("My List", Icons.Filled.Bookmark, Icons.Outlined.BookmarkBorder),
+    BottomNavTab("Settings", Icons.Filled.Settings, Icons.Outlined.Settings)
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen() {
-    var selectedTab by remember { mutableIntStateOf(0) }
+    var selectedTabIndex by remember { mutableIntStateOf(0) }
     val custom = LocalCustomColors.current
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text("AnimK", color = custom.primary)
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = androidx.compose.ui.graphics.Color.Transparent
-                )
-            )
-        },
-        bottomBar = {
-            NavigationBar(
-                containerColor = custom.surface
-            ) {
-                tabs.forEachIndexed { index, tab ->
-                    NavigationBarItem(
-                        selected = selectedTab == index,
-                        onClick = { selectedTab = index },
-                        icon = {
-                            Icon(
-                                imageVector = if (selectedTab == index) tab.selectedIcon else tab.unselectedIcon,
-                                contentDescription = tab.label
+    // Active detail item state
+    var selectedMediaForDetail by remember { mutableStateOf<MediaItem?>(null) }
+    
+    // Active player item state
+    var selectedMediaForPlayer by remember { mutableStateOf<MediaItem?>(null) }
+
+    // Interactive My List state
+    val myListState = remember { mutableStateListOf<MediaItem>().apply { addAll(MockDataRepository.drakorList.take(1)) } }
+
+    fun toggleMyList(media: MediaItem) {
+        val exists = myListState.any { it.id == media.id }
+        if (exists) {
+            myListState.removeAll { it.id == media.id }
+        } else {
+            myListState.add(media)
+        }
+    }
+
+    // Fullscreen Player View
+    if (selectedMediaForPlayer != null) {
+        NetflixMediaPlayerScreen(
+            media = selectedMediaForPlayer!!,
+            onBack = { selectedMediaForPlayer = null }
+        )
+    } else {
+        Scaffold(
+            bottomBar = {
+                NavigationBar(
+                    containerColor = custom.surface,
+                    contentColor = custom.textPrimary
+                ) {
+                    bottomTabs.forEachIndexed { index, tab ->
+                        NavigationBarItem(
+                            selected = selectedTabIndex == index,
+                            onClick = { selectedTabIndex = index },
+                            icon = {
+                                Icon(
+                                    imageVector = if (selectedTabIndex == index) tab.selectedIcon else tab.unselectedIcon,
+                                    contentDescription = tab.label
+                                )
+                            },
+                            label = { Text(tab.label) },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = custom.primary,
+                                selectedTextColor = custom.primary,
+                                unselectedIconColor = custom.textSecondary,
+                                unselectedTextColor = custom.textSecondary,
+                                indicatorColor = custom.primary.copy(alpha = 0.15f)
                             )
-                        },
-                        label = { Text(tab.label) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = custom.primary,
-                            selectedTextColor = custom.primary,
-                            unselectedIconColor = custom.textSecondary,
-                            unselectedTextColor = custom.textSecondary,
-                            indicatorColor = custom.primary.copy(alpha = 0.12f)
                         )
-                    )
+                    }
                 }
             }
+        ) { innerPadding ->
+            val contentModifier = Modifier.padding(innerPadding)
+
+            when (selectedTabIndex) {
+                0 -> HomeScreen(
+                    onMediaClick = { selectedMediaForDetail = it },
+                    onPlayClick = { selectedMediaForPlayer = it },
+                    onToggleMyList = { toggleMyList(it) },
+                    myList = myListState,
+                    modifier = contentModifier
+                )
+                1 -> SearchScreen(
+                    onMediaClick = { selectedMediaForDetail = it },
+                    modifier = contentModifier
+                )
+                2 -> MyListScreen(
+                    myList = myListState,
+                    onMediaClick = { selectedMediaForDetail = it },
+                    modifier = contentModifier
+                )
+                3 -> SettingsScreen(
+                    modifier = contentModifier
+                )
+            }
+
+            // Slide-up Netflix Detail Modal Sheet
+            selectedMediaForDetail?.let { media ->
+                MediaDetailSheet(
+                    media = media,
+                    isInMyList = myListState.any { it.id == media.id },
+                    onDismiss = { selectedMediaForDetail = null },
+                    onPlayClick = {
+                        selectedMediaForDetail = null
+                        selectedMediaForPlayer = it
+                    },
+                    onToggleMyList = { toggleMyList(it) }
+                )
+            }
         }
-    ) { innerPadding ->
-        when (selectedTab) {
-            0 -> AnimeList(modifier = Modifier.padding(innerPadding))
-            1 -> DonghuaList(modifier = Modifier.padding(innerPadding))
-            2 -> DrakorList(modifier = Modifier.padding(innerPadding))
-        }
-    }
-}
-
-@Composable
-private fun AnimeList(modifier: Modifier = Modifier) {
-    androidx.compose.foundation.layout.Box(modifier = modifier) {
-        Text("Anime", color = LocalCustomColors.current.textSecondary)
-    }
-}
-
-@Composable
-private fun DonghuaList(modifier: Modifier = Modifier) {
-    androidx.compose.foundation.layout.Box(modifier = modifier) {
-        Text("Donghua", color = LocalCustomColors.current.textSecondary)
-    }
-}
-
-@Composable
-private fun DrakorList(modifier: Modifier = Modifier) {
-    androidx.compose.foundation.layout.Box(modifier = modifier) {
-        Text("Drakor", color = LocalCustomColors.current.textSecondary)
     }
 }
