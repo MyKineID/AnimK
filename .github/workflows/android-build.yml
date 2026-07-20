@@ -27,7 +27,12 @@ jobs:
 
       - run: chmod +x gradlew
 
-      - run: ./gradlew assembleDebug --stacktrace
+      - name: Setup Android SDK
+        run: |
+          yes | /usr/local/lib/android/sdk/tools/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+          yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+
+      - run: ./gradlew assembleDebug --stacktrace --no-daemon
 
       - uses: actions/upload-artifact@v4
         with:
