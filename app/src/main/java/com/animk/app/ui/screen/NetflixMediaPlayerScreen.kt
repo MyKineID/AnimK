@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,15 +18,20 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.animk.app.data.model.MediaItem
 import com.animk.app.ui.theme.LocalCustomColors
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -35,6 +41,7 @@ fun NetflixMediaPlayerScreen(
 ) {
     val custom = LocalCustomColors.current
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
 
     // Lock screen orientation to Landscape while playing
     DisposableEffect(Unit) {
@@ -53,13 +60,32 @@ fun NetflixMediaPlayerScreen(
     var isControlsVisible by remember { mutableStateOf(true) }
     var isLocked by remember { mutableStateOf(false) }
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
+    var is2xSpeedActive by remember { mutableStateOf(false) }
     var aspectRatioMode by remember { mutableStateOf("Fit") }
-    var showSpeedDialog by remember { mutableStateOf(false) }
+    var showSpeedSheet by remember { mutableStateOf(false) }
     var showEpisodeSheet by remember { mutableStateOf(false) }
+
+    // Double tap feedback overlays
+    var showLeftDoubleTapBadge by remember { mutableStateOf(false) }
+    var showRightDoubleTapBadge by remember { mutableStateOf(false) }
+
+    LaunchedEffect(showLeftDoubleTapBadge) {
+        if (showLeftDoubleTapBadge) {
+            delay(800)
+            showLeftDoubleTapBadge = false
+        }
+    }
+
+    LaunchedEffect(showRightDoubleTapBadge) {
+        if (showRightDoubleTapBadge) {
+            delay(800)
+            showRightDoubleTapBadge = false
+        }
+    }
 
     LaunchedEffect(isPlaying, isControlsVisible, isLocked) {
         if (isPlaying && isControlsVisible && !isLocked) {
-            kotlinx.coroutines.delay(4000)
+            delay(4000)
             isControlsVisible = false
         }
     }
@@ -68,10 +94,44 @@ fun NetflixMediaPlayerScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .clickable {
-                if (!isLocked) {
-                    isControlsVisible = !isControlsVisible
-                }
+            .pointerInput(isLocked) {
+                detectTapGestures(
+                    onTap = {
+                        if (!isLocked) {
+                            isControlsVisible = !isControlsVisible
+                        }
+                    },
+                    onDoubleTap = { offset ->
+                        if (!isLocked) {
+                            val screenWidth = size.width
+                            if (offset.x < screenWidth / 2) {
+                                // Double tap left: Rewind 10s
+                                currentPosition = (currentPosition - 10f).coerceAtLeast(0f)
+                                showLeftDoubleTapBadge = true
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            } else {
+                                // Double tap right: Fast Forward 10s
+                                currentPosition = (currentPosition + 10f).coerceAtMost(totalDuration)
+                                showRightDoubleTapBadge = true
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            }
+                        }
+                    },
+                    onPress = {
+                        if (!isLocked) {
+                            val pressResult = tryAwaitRelease()
+                            if (is2xSpeedActive) {
+                                is2xSpeedActive = false
+                            }
+                        }
+                    },
+                    onLongPress = {
+                        if (!isLocked) {
+                            is2xSpeedActive = true
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        }
+                    }
+                )
             }
     ) {
         // Fullscreen Video Backdrop
@@ -95,7 +155,70 @@ fun NetflixMediaPlayerScreen(
             )
         }
 
-        // Single Sleek Floating Lock Button when Locked (No text banner, no notifications)
+        // Top 2x Speed Pill (Non-intrusive layout)
+        if (is2xSpeedActive) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(top = 16.dp),
+                contentAlignment = Alignment.TopCenter
+            ) {
+                Surface(
+                    color = custom.primary,
+                    shape = RoundedCornerShape(20.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.FastForward, contentDescription = null, tint = custom.onPrimary, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "2X Speed Active",
+                            color = custom.onPrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            }
+        }
+
+        // YouTube-style Double Tap Badges
+        if (showLeftDoubleTapBadge) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 48.dp)
+                    .size(90.dp)
+                    .background(Color.Black.copy(alpha = 0.6f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Filled.FastRewind, contentDescription = null, tint = Color.White, modifier = Modifier.size(32.dp))
+                    Text("-10s", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            }
+        }
+
+        if (showRightDoubleTapBadge) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 48.dp)
+                    .size(90.dp)
+                    .background(Color.Black.copy(alpha = 0.6f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Filled.FastForward, contentDescription = null, tint = Color.White, modifier = Modifier.size(32.dp))
+                    Text("+10s", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            }
+        }
+
+        // Single Floating Lock Button when Locked (No text banner, no notifications)
         if (isLocked) {
             Box(
                 modifier = Modifier
@@ -162,7 +285,7 @@ fun NetflixMediaPlayerScreen(
                     }
 
                     Row {
-                        IconButton(onClick = { showSpeedDialog = true }) {
+                        IconButton(onClick = { showSpeedSheet = true }) {
                             Icon(Icons.Filled.Speed, contentDescription = "Speed", tint = Color.White)
                         }
                         IconButton(onClick = {
@@ -303,45 +426,43 @@ fun NetflixMediaPlayerScreen(
         }
     }
 
-    if (showSpeedDialog) {
-        AlertDialog(
-            onDismissRequest = { showSpeedDialog = false },
-            title = { Text("Playback Speed", color = custom.textPrimary) },
-            text = {
-                Column {
-                    listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { speed ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    playbackSpeed = speed
-                                    showSpeedDialog = false
-                                }
-                                .padding(vertical = 12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = if (speed == 1.0f) "Normal (1.0x)" else "${speed}x",
-                                color = if (playbackSpeed == speed) custom.primary else custom.textPrimary,
-                                fontWeight = if (playbackSpeed == speed) FontWeight.Bold else FontWeight.Normal
-                            )
-                            if (playbackSpeed == speed) {
-                                Icon(Icons.Filled.Check, contentDescription = null, tint = custom.primary)
+    // Speed Selection Modal Bottom Sheet (No Alert Popups)
+    if (showSpeedSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showSpeedSheet = false },
+            containerColor = custom.surface
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Playback Speed", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = custom.textPrimary)
+                Spacer(modifier = Modifier.height(12.dp))
+                listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { speed ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                playbackSpeed = speed
+                                showSpeedSheet = false
                             }
+                            .padding(vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (speed == 1.0f) "Normal (1.0x)" else "${speed}x",
+                            color = if (playbackSpeed == speed) custom.primary else custom.textPrimary,
+                            fontWeight = if (playbackSpeed == speed) FontWeight.Bold else FontWeight.Normal
+                        )
+                        if (playbackSpeed == speed) {
+                            Icon(Icons.Filled.Check, contentDescription = null, tint = custom.primary)
                         }
                     }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { showSpeedDialog = false }) {
-                    Text("Close", color = custom.primary)
-                }
-            },
-            containerColor = custom.surface
-        )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
     }
 
+    // Episodes Selector Sheet
     if (showEpisodeSheet) {
         ModalBottomSheet(
             onDismissRequest = { showEpisodeSheet = false },
@@ -366,6 +487,7 @@ fun NetflixMediaPlayerScreen(
                         }
                     }
                 }
+                Spacer(modifier = Modifier.height(16.dp))
             }
         }
     }

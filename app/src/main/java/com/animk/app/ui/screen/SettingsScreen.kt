@@ -1,9 +1,13 @@
 package com.animk.app.ui.screen
 
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.animk.app.ui.theme.AppThemeAccent
@@ -25,7 +30,7 @@ import com.animk.app.ui.theme.LocalCustomColors
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    activeAccent: AppThemeAccent = AppThemeAccent.NEON_LIME,
+    activeAccent: AppThemeAccent = AppThemeAccent.NEON_GECKO,
     onAccentChange: (AppThemeAccent) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -39,9 +44,9 @@ fun SettingsScreen(
     var notifyRecommendations by remember { mutableStateOf(false) }
 
     var cacheSizeMb by remember { mutableIntStateOf(148) }
-    var showSignOutDialog by remember { mutableStateOf(false) }
-    var showDataUsageDialog by remember { mutableStateOf(false) }
-    var showThemeDialog by remember { mutableStateOf(false) }
+    var showSignOutSheet by remember { mutableStateOf(false) }
+    var showDataUsageSheet by remember { mutableStateOf(false) }
+    var showThemeSheet by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -125,7 +130,7 @@ fun SettingsScreen(
             icon = Icons.Filled.DataUsage,
             title = "Cellular Data Usage",
             subtitle = cellularDataMode,
-            onClick = { showDataUsageDialog = true }
+            onClick = { showDataUsageSheet = true }
         )
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -179,9 +184,9 @@ fun SettingsScreen(
 
         SettingsClickItem(
             icon = Icons.Filled.Palette,
-            title = "App Color Theme",
-            subtitle = "${activeAccent.label} (Tap to change)",
-            onClick = { showThemeDialog = true }
+            title = "App Theme Accent",
+            subtitle = "${activeAccent.animalName} (Tap to change)",
+            onClick = { showThemeSheet = true }
         )
 
         SettingsClickItem(
@@ -198,7 +203,7 @@ fun SettingsScreen(
 
         // Sign Out Button
         Button(
-            onClick = { showSignOutDialog = true },
+            onClick = { showSignOutSheet = true },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(48.dp),
@@ -216,126 +221,178 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(16.dp))
 
         Text(
-            text = "AnimK Version 2.4.0 (High-FPS Edition)",
+            text = "AnimK Version 2.5.0 (15 Animal Themes Edition)",
             color = custom.textMuted,
             fontSize = 11.sp,
             modifier = Modifier.align(Alignment.CenterHorizontally)
         )
     }
 
-    // App Theme Color Picker Dialog
-    if (showThemeDialog) {
-        AlertDialog(
-            onDismissRequest = { showThemeDialog = false },
-            title = { Text("Choose App Accent Theme", color = custom.textPrimary) },
-            text = {
-                Column {
-                    AppThemeAccent.entries.forEach { accent ->
-                        Row(
+    // Compact 3-Column Grid Theme Bottom Sheet (No Alert Popups)
+    if (showThemeSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showThemeSheet = false },
+            containerColor = custom.surface,
+            contentColor = custom.textPrimary
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            ) {
+                Text(
+                    text = "Choose Animal Theme Accent",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = custom.textPrimary
+                )
+                Text(
+                    text = "15 Sleek curated themes in a compact view",
+                    fontSize = 12.sp,
+                    color = custom.textMuted
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(3),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.height(340.dp)
+                ) {
+                    items(AppThemeAccent.entries) { accent ->
+                        val isSelected = activeAccent == accent
+                        Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
                                     onAccentChange(accent)
-                                    showThemeDialog = false
-                                    Toast.makeText(context, "Theme set to ${accent.label}", Toast.LENGTH_SHORT).show()
-                                }
-                                .padding(vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                                    showThemeSheet = false
+                                    Toast.makeText(context, "Theme set to ${accent.animalName}", Toast.LENGTH_SHORT).show()
+                                },
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isSelected) custom.cardSurface else custom.background,
+                            border = BorderStroke(
+                                width = if (isSelected) 2.dp else 1.dp,
+                                color = if (isSelected) accent.primaryColor else custom.cardSurface
+                            )
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(
+                                modifier = Modifier.padding(8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(24.dp)
+                                        .size(32.dp)
                                         .clip(CircleShape)
-                                        .background(accent.primaryColor)
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Text(
-                                    text = accent.label,
-                                    color = if (activeAccent == accent) custom.primary else custom.textPrimary,
-                                    fontWeight = if (activeAccent == accent) FontWeight.Bold else FontWeight.Normal
-                                )
-                            }
-                            if (activeAccent == accent) {
-                                Icon(Icons.Filled.Check, contentDescription = null, tint = custom.primary)
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showThemeDialog = false }) {
-                    Text("Close", color = custom.primary)
-                }
-            },
-            containerColor = custom.surface
-        )
-    }
-
-    // Cellular Data Usage Dialog
-    if (showDataUsageDialog) {
-        AlertDialog(
-            onDismissRequest = { showDataUsageDialog = false },
-            title = { Text("Cellular Data Usage", color = custom.textPrimary) },
-            text = {
-                Column {
-                    listOf("Automatic", "Wi-Fi Only", "Save Data", "Maximum Data").forEach { mode ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    cellularDataMode = mode
-                                    showDataUsageDialog = false
+                                        .background(accent.primaryColor),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (isSelected) {
+                                        Icon(
+                                            Icons.Filled.Check,
+                                            contentDescription = null,
+                                            tint = accent.onPrimaryColor,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
                                 }
-                                .padding(vertical = 12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = mode,
-                                color = if (cellularDataMode == mode) custom.primary else custom.textPrimary,
-                                fontWeight = if (cellularDataMode == mode) FontWeight.Bold else FontWeight.Normal
-                            )
-                            if (cellularDataMode == mode) {
-                                Icon(Icons.Filled.Check, contentDescription = null, tint = custom.primary)
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = accent.animalName,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isSelected) accent.primaryColor else custom.textPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
                         }
                     }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { showDataUsageDialog = false }) {
-                    Text("Close", color = custom.primary)
-                }
-            },
-            containerColor = custom.surface
-        )
+
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
     }
 
-    // Sign Out Dialog
-    if (showSignOutDialog) {
-        AlertDialog(
-            onDismissRequest = { showSignOutDialog = false },
-            title = { Text("Sign Out", color = custom.textPrimary) },
-            text = { Text("Are you sure you want to sign out of your AnimK account?", color = custom.textSecondary) },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showSignOutDialog = false
-                        Toast.makeText(context, "Signed out of AnimK", Toast.LENGTH_SHORT).show()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text("Sign Out", color = MaterialTheme.colorScheme.onError)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSignOutDialog = false }) {
-                    Text("Cancel", color = custom.textPrimary)
-                }
-            },
+    // Cellular Data Usage Bottom Sheet (No Alert Popups)
+    if (showDataUsageSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showDataUsageSheet = false },
             containerColor = custom.surface
-        )
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Cellular Data Usage", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = custom.textPrimary)
+                Spacer(modifier = Modifier.height(12.dp))
+                listOf("Automatic", "Wi-Fi Only", "Save Data", "Maximum Data").forEach { mode ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                cellularDataMode = mode
+                                showDataUsageSheet = false
+                            }
+                            .padding(vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = mode,
+                            color = if (cellularDataMode == mode) custom.primary else custom.textPrimary,
+                            fontWeight = if (cellularDataMode == mode) FontWeight.Bold else FontWeight.Normal
+                        )
+                        if (cellularDataMode == mode) {
+                            Icon(Icons.Filled.Check, contentDescription = null, tint = custom.primary)
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+    }
+
+    // Sign Out Bottom Sheet (No Alert Popups)
+    if (showSignOutSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showSignOutSheet = false },
+            containerColor = custom.surface
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(Icons.Filled.Logout, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(40.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+                Text("Sign Out of AnimK", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = custom.textPrimary)
+                Spacer(modifier = Modifier.height(6.dp))
+                Text("Are you sure you want to sign out of your account?", fontSize = 13.sp, color = custom.textSecondary)
+                Spacer(modifier = Modifier.height(20.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { showSignOutSheet = false },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = custom.textPrimary)
+                    ) {
+                        Text("Cancel")
+                    }
+                    Button(
+                        onClick = {
+                            showSignOutSheet = false
+                            Toast.makeText(context, "Signed out of AnimK", Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("Sign Out", color = MaterialTheme.colorScheme.onError)
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
     }
 }
 
