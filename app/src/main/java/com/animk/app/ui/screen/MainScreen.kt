@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import com.animk.app.data.model.MediaItem
 import com.animk.app.data.repository.MockDataRepository
 import com.animk.app.ui.component.MediaDetailSheet
+import com.animk.app.ui.theme.AppThemeAccent
 import com.animk.app.ui.theme.LocalCustomColors
 
 data class BottomNavTab(
@@ -34,7 +35,10 @@ val bottomTabs = listOf(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen() {
+fun MainScreen(
+    activeAccent: AppThemeAccent = AppThemeAccent.NEON_LIME,
+    onAccentChange: (AppThemeAccent) -> Unit = {}
+) {
     var selectedTabIndex by remember { mutableIntStateOf(0) }
     val custom = LocalCustomColors.current
 
@@ -112,6 +116,8 @@ fun MainScreen() {
                     modifier = contentModifier
                 )
                 3 -> SettingsScreen(
+                    activeAccent = activeAccent,
+                    onAccentChange = onAccentChange,
                     modifier = contentModifier
                 )
             }

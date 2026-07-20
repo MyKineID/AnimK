@@ -3,11 +3,15 @@ package com.animk.app.ui.screen
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.EmojiEvents
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,7 +22,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.animk.app.data.model.MediaItem
-import com.animk.app.data.model.MediaType
 import com.animk.app.data.repository.MockDataRepository
 import com.animk.app.ui.component.HeroBanner
 import com.animk.app.ui.component.MediaRow
@@ -37,7 +40,7 @@ fun HomeScreen(
 
     val categories = listOf("All", "Anime", "Donghua", "Drakor")
 
-    val featuredMedia = remember { MockDataRepository.heroFeatured }
+    val carouselMediaList = remember { MockDataRepository.getAllMedia().take(4) }
     val animeList = remember { MockDataRepository.animeList }
     val donghuaList = remember { MockDataRepository.donghuaList }
     val drakorList = remember { MockDataRepository.drakorList }
@@ -48,56 +51,74 @@ fun HomeScreen(
             .fillMaxSize()
             .background(custom.background)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+        // High performance LazyColumn for smooth 60-120Hz scrolling
+        LazyColumn(
+            modifier = Modifier.fillMaxSize()
         ) {
-            // Hero Banner Header
-            HeroBanner(
-                media = featuredMedia,
-                onPlayClick = onPlayClick,
-                onDetailClick = onMediaClick,
-                onToggleMyList = onToggleMyList,
-                isInMyList = myList.any { it.id == featuredMedia.id }
-            )
+            // Hero Multi-item Carousel Banner
+            item {
+                HeroBanner(
+                    items = carouselMediaList,
+                    onPlayClick = onPlayClick,
+                    onDetailClick = onMediaClick,
+                    onToggleMyList = onToggleMyList,
+                    myList = myList
+                )
+            }
 
-            // Content Rows based on category selection
+            // Anime Row
             if (selectedCategory == "All" || selectedCategory == "Anime") {
+                item {
+                    MediaRow(
+                        title = "Trending Anime Now",
+                        icon = Icons.Filled.Whatshot,
+                        items = animeList,
+                        onMediaClick = onMediaClick
+                    )
+                }
+            }
+
+            // Top 10 Row
+            item {
                 MediaRow(
-                    title = "🔥 Trending Anime Now",
-                    items = animeList,
-                    onMediaClick = onMediaClick
+                    title = "Top 10 Today in Indonesia",
+                    icon = Icons.Filled.EmojiEvents,
+                    items = top10List,
+                    onMediaClick = onMediaClick,
+                    isTop10Row = true
                 )
             }
 
-            MediaRow(
-                title = "🏆 Top 10 Today in Indonesia",
-                items = top10List,
-                onMediaClick = onMediaClick,
-                isTop10Row = true
-            )
-
+            // Donghua Row
             if (selectedCategory == "All" || selectedCategory == "Donghua") {
-                MediaRow(
-                    title = "⚔️ Popular Donghua & Cultivation",
-                    items = donghuaList,
-                    onMediaClick = onMediaClick
-                )
+                item {
+                    MediaRow(
+                        title = "Popular Donghua & Cultivation",
+                        icon = Icons.Filled.FlashOn,
+                        items = donghuaList,
+                        onMediaClick = onMediaClick
+                    )
+                }
             }
 
+            // Drakor Row
             if (selectedCategory == "All" || selectedCategory == "Drakor") {
-                MediaRow(
-                    title = "❤️ Korean Drama Hits",
-                    items = drakorList,
-                    onMediaClick = onMediaClick
-                )
+                item {
+                    MediaRow(
+                        title = "Korean Drama Hits",
+                        icon = Icons.Filled.Favorite,
+                        items = drakorList,
+                        onMediaClick = onMediaClick
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            item {
+                Spacer(modifier = Modifier.height(32.dp))
+            }
         }
 
-        // Top Overlay Header with Logo and Category Filter Chips
+        // Top Overlay Header with Logo and Category Filter Chips (Clean logo without "NETFLIX UI" text)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -117,8 +138,7 @@ fun HomeScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = "AnimK",
@@ -127,19 +147,6 @@ fun HomeScreen(
                     color = custom.primary,
                     letterSpacing = 0.5.sp
                 )
-
-                Surface(
-                    color = custom.surface.copy(alpha = 0.8f),
-                    shape = CircleShape
-                ) {
-                    Text(
-                        text = "NETFLIX UI",
-                        color = custom.primary,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
-                }
             }
 
             // Category Filter Pills

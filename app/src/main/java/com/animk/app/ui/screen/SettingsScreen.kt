@@ -19,11 +19,16 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.animk.app.ui.theme.AppThemeAccent
 import com.animk.app.ui.theme.LocalCustomColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(modifier: Modifier = Modifier) {
+fun SettingsScreen(
+    activeAccent: AppThemeAccent = AppThemeAccent.NEON_LIME,
+    onAccentChange: (AppThemeAccent) -> Unit = {},
+    modifier: Modifier = Modifier
+) {
     val custom = LocalCustomColors.current
     val context = LocalContext.current
 
@@ -36,6 +41,7 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
     var cacheSizeMb by remember { mutableIntStateOf(148) }
     var showSignOutDialog by remember { mutableStateOf(false) }
     var showDataUsageDialog by remember { mutableStateOf(false) }
+    var showThemeDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -52,7 +58,7 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
             modifier = Modifier.padding(vertical = 12.dp)
         )
 
-        // Profile Header Card (User specified Profile name: AnimK)
+        // Profile Header Card (Profile Name: AnimK)
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -174,10 +180,8 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
         SettingsClickItem(
             icon = Icons.Filled.Palette,
             title = "App Color Theme",
-            subtitle = "Obsidian Dark & Neon Lime (Active)",
-            onClick = {
-                Toast.makeText(context, "Theme set to Obsidian Dark & Neon Lime", Toast.LENGTH_SHORT).show()
-            }
+            subtitle = "${activeAccent.label} (Tap to change)",
+            onClick = { showThemeDialog = true }
         )
 
         SettingsClickItem(
@@ -211,12 +215,61 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Version info
         Text(
-            text = "AnimK Version 2.4.0 (Netflix Edition)",
+            text = "AnimK Version 2.4.0 (High-FPS Edition)",
             color = custom.textMuted,
             fontSize = 11.sp,
             modifier = Modifier.align(Alignment.CenterHorizontally)
+        )
+    }
+
+    // App Theme Color Picker Dialog
+    if (showThemeDialog) {
+        AlertDialog(
+            onDismissRequest = { showThemeDialog = false },
+            title = { Text("Choose App Accent Theme", color = custom.textPrimary) },
+            text = {
+                Column {
+                    AppThemeAccent.entries.forEach { accent ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onAccentChange(accent)
+                                    showThemeDialog = false
+                                    Toast.makeText(context, "Theme set to ${accent.label}", Toast.LENGTH_SHORT).show()
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .clip(CircleShape)
+                                        .background(accent.primaryColor)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(
+                                    text = accent.label,
+                                    color = if (activeAccent == accent) custom.primary else custom.textPrimary,
+                                    fontWeight = if (activeAccent == accent) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                            if (activeAccent == accent) {
+                                Icon(Icons.Filled.Check, contentDescription = null, tint = custom.primary)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showThemeDialog = false }) {
+                    Text("Close", color = custom.primary)
+                }
+            },
+            containerColor = custom.surface
         )
     }
 
