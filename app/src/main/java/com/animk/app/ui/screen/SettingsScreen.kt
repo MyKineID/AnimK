@@ -116,7 +116,7 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
         SettingsSectionTitle("VIDEO PLAYBACK & DATA")
 
         SettingsClickItem(
-            icon = Icons.Filled.CellularData1Bar,
+            icon = Icons.Filled.DataUsage,
             title = "Cellular Data Usage",
             subtitle = cellularDataMode,
             onClick = { showDataUsageDialog = true }
@@ -159,7 +159,7 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
         )
 
         SettingsSwitchItem(
-            icon = Icons.Filled.Recommend,
+            icon = Icons.Filled.ThumbUp,
             title = "Personal Recommendations",
             subtitle = "Occasional suggestions based on your watch history",
             checked = notifyRecommendations,
@@ -181,7 +181,7 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
         )
 
         SettingsClickItem(
-            icon = Icons.Filled.CleaningServices,
+            icon = Icons.Filled.DeleteSweep,
             title = "Clear Cache",
             subtitle = "Used cache space: ${cacheSizeMb}MB",
             onClick = {

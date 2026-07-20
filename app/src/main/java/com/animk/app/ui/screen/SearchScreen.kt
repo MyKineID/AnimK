@@ -1,5 +1,6 @@
 package com.animk.app.ui.screen
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -104,12 +105,7 @@ fun SearchScreen(
                         containerColor = custom.surface,
                         labelColor = custom.textSecondary
                     ),
-                    border = FilterChipDefaults.filterChipBorder(
-                        enabled = true,
-                        selected = isSelected,
-                        borderColor = custom.cardSurface,
-                        selectedBorderColor = custom.primary
-                    )
+                    border = BorderStroke(1.dp, if (isSelected) custom.primary else custom.cardSurface)
                 )
             }
         }

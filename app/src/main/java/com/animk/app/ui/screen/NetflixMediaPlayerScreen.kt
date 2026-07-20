@@ -15,7 +15,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -34,8 +33,8 @@ fun NetflixMediaPlayerScreen(
     val custom = LocalCustomColors.current
 
     var isPlaying by remember { mutableStateOf(true) }
-    var currentPosition by remember { mutableFloatStateOf(120f) } // 2 mins in seconds
-    val totalDuration = 1440f // 24 mins in seconds
+    var currentPosition by remember { mutableFloatStateOf(120f) }
+    val totalDuration = 1440f
     var isControlsVisible by remember { mutableStateOf(true) }
     var isLocked by remember { mutableStateOf(false) }
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
@@ -43,7 +42,6 @@ fun NetflixMediaPlayerScreen(
     var showSpeedDialog by remember { mutableStateOf(false) }
     var showEpisodeSheet by remember { mutableStateOf(false) }
 
-    // Auto hide controls simulation
     LaunchedEffect(isPlaying, isControlsVisible) {
         if (isPlaying && isControlsVisible && !isLocked) {
             kotlinx.coroutines.delay(4000)
@@ -59,11 +57,10 @@ fun NetflixMediaPlayerScreen(
                 if (!isLocked) {
                     isControlsVisible = !isControlsVisible
                 } else {
-                    isControlsVisible = true // Show unlock button when locked
+                    isControlsVisible = true
                 }
             }
     ) {
-        // Video Backdrop Simulation
         AsyncImage(
             model = media.backdropUrl.ifEmpty { media.posterUrl },
             contentDescription = media.title,
@@ -75,7 +72,6 @@ fun NetflixMediaPlayerScreen(
             }
         )
 
-        // Overlay Dimming when controls are visible
         if (isControlsVisible) {
             Box(
                 modifier = Modifier
@@ -84,7 +80,6 @@ fun NetflixMediaPlayerScreen(
             )
         }
 
-        // Animated Controls Overlay
         AnimatedVisibility(
             visible = isControlsVisible,
             enter = fadeIn(),
@@ -92,7 +87,6 @@ fun NetflixMediaPlayerScreen(
             modifier = Modifier.fillMaxSize()
         ) {
             if (isLocked) {
-                // Locked Overlay View
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
@@ -111,9 +105,7 @@ fun NetflixMediaPlayerScreen(
                     }
                 }
             } else {
-                // Normal Netflix Controls
                 Box(modifier = Modifier.fillMaxSize()) {
-                    // Top Bar Controls
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -162,7 +154,6 @@ fun NetflixMediaPlayerScreen(
                         }
                     }
 
-                    // Center Playback Controls (-10s, Play/Pause, +10s)
                     Row(
                         modifier = Modifier
                             .align(Alignment.Center)
@@ -170,7 +161,6 @@ fun NetflixMediaPlayerScreen(
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // -10 Seconds
                         IconButton(
                             onClick = {
                                 currentPosition = (currentPosition - 10f).coerceAtLeast(0f)
@@ -180,14 +170,13 @@ fun NetflixMediaPlayerScreen(
                                 .background(Color.Black.copy(alpha = 0.4f), CircleShape)
                         ) {
                             Icon(
-                                Icons.Filled.Replay10,
+                                Icons.Filled.FastRewind,
                                 contentDescription = "Rewind 10s",
                                 tint = Color.White,
                                 modifier = Modifier.size(32.dp)
                             )
                         }
 
-                        // Big Play / Pause Toggle Button
                         IconButton(
                             onClick = { isPlaying = !isPlaying },
                             modifier = Modifier
@@ -202,7 +191,6 @@ fun NetflixMediaPlayerScreen(
                             )
                         }
 
-                        // +10 Seconds
                         IconButton(
                             onClick = {
                                 currentPosition = (currentPosition + 10f).coerceAtMost(totalDuration)
@@ -212,7 +200,7 @@ fun NetflixMediaPlayerScreen(
                                 .background(Color.Black.copy(alpha = 0.4f), CircleShape)
                         ) {
                             Icon(
-                                Icons.Filled.Forward10,
+                                Icons.Filled.FastForward,
                                 contentDescription = "Forward 10s",
                                 tint = Color.White,
                                 modifier = Modifier.size(32.dp)
@@ -220,7 +208,6 @@ fun NetflixMediaPlayerScreen(
                         }
                     }
 
-                    // Bottom Bar Controls & Slider
                     Column(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -228,7 +215,6 @@ fun NetflixMediaPlayerScreen(
                             .navigationBarsPadding()
                             .padding(16.dp)
                     ) {
-                        // Slider + Time Indicators
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth()
@@ -266,7 +252,6 @@ fun NetflixMediaPlayerScreen(
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // Bottom Actions Row (Lock, Episodes, Audio/Sub)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -294,7 +279,6 @@ fun NetflixMediaPlayerScreen(
         }
     }
 
-    // Speed Selection Dialog
     if (showSpeedDialog) {
         AlertDialog(
             onDismissRequest = { showSpeedDialog = false },
@@ -334,7 +318,6 @@ fun NetflixMediaPlayerScreen(
         )
     }
 
-    // Episodes Selector Sheet
     if (showEpisodeSheet) {
         ModalBottomSheet(
             onDismissRequest = { showEpisodeSheet = false },
