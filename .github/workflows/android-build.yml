@@ -27,15 +27,13 @@ jobs:
 
       - run: chmod +x gradlew
 
-      - name: Setup Android SDK
-        run: |
-          yes | /usr/local/lib/android/sdk/tools/bin/sdkmanager --licenses > /dev/null 2>&1 || true
-          yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
-
-      - run: ./gradlew assembleDebug --stacktrace --no-daemon
+      - run: ./gradlew assembleDebug --stacktrace --no-daemon 2>&1 | tee build-log.txt
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: AnimK-APK
-          path: app/build/outputs/apk/debug/*.apk
-          retention-days: 14
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            build-log.txt
+          retention-days: 7
