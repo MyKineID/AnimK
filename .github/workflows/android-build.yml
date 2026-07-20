@@ -1,4 +1,4 @@
-name: Build Debug APK
+name: Build Signed Release APK
 
 on:
   push:
@@ -27,11 +27,11 @@ jobs:
 
       - run: chmod +x gradlew
 
-      - name: Build debug APK
+      - name: Build Signed Release APK
         shell: bash
         run: |
           set -o pipefail
-          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee build-log.txt
+          ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee build-log.txt
 
       - name: Report build error
         if: failure()
@@ -42,8 +42,8 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AnimK-APK
-          path: app/build/outputs/apk/debug/*.apk
+          name: AnimK-Release-APK
+          path: app/build/outputs/apk/release/*.apk
           retention-days: 14
           if-no-files-found: error
 

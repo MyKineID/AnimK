@@ -2,11 +2,10 @@ package com.animk.app.ui.screen
 
 import android.content.pm.ActivityInfo
 import androidx.activity.ComponentActivity
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -19,15 +18,19 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import coil3.compose.AsyncImage
 import com.animk.app.data.model.MediaItem
 import com.animk.app.ui.theme.LocalCustomColors
@@ -43,14 +46,23 @@ fun NetflixMediaPlayerScreen(
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
 
-    // Lock screen orientation to Landscape while playing
+    // Immersive Fullscreen Mode + Landscape Lock
     DisposableEffect(Unit) {
         val activity = context as? ComponentActivity
+        val window = activity?.window
         val previousOrientation = activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
 
+        // Hide Status Bar and Navigation Bar (Immersive Sticky)
+        val insetsController = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+        insetsController?.apply {
+            hide(WindowInsetsCompat.Type.systemBars())
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+
         onDispose {
             activity?.requestedOrientation = previousOrientation
+            insetsController?.show(WindowInsetsCompat.Type.systemBars())
         }
     }
 
@@ -68,6 +80,9 @@ fun NetflixMediaPlayerScreen(
     // Double tap feedback overlays
     var showLeftDoubleTapBadge by remember { mutableStateOf(false) }
     var showRightDoubleTapBadge by remember { mutableStateOf(false) }
+
+    // Drag vertical offset for Swipe Down to Exit
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
 
     LaunchedEffect(showLeftDoubleTapBadge) {
         if (showLeftDoubleTapBadge) {
@@ -94,6 +109,19 @@ fun NetflixMediaPlayerScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        dragOffsetY += dragAmount.y
+                        if (dragOffsetY > 150f && !isLocked) {
+                            onBack()
+                        }
+                    },
+                    onDragEnd = { dragOffsetY = 0f },
+                    onDragCancel = { dragOffsetY = 0f }
+                )
+            }
             .pointerInput(isLocked) {
                 detectTapGestures(
                     onTap = {
@@ -105,12 +133,10 @@ fun NetflixMediaPlayerScreen(
                         if (!isLocked) {
                             val screenWidth = size.width
                             if (offset.x < screenWidth / 2) {
-                                // Double tap left: Rewind 10s
                                 currentPosition = (currentPosition - 10f).coerceAtLeast(0f)
                                 showLeftDoubleTapBadge = true
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             } else {
-                                // Double tap right: Fast Forward 10s
                                 currentPosition = (currentPosition + 10f).coerceAtMost(totalDuration)
                                 showRightDoubleTapBadge = true
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -119,7 +145,7 @@ fun NetflixMediaPlayerScreen(
                     },
                     onPress = {
                         if (!isLocked) {
-                            val pressResult = tryAwaitRelease()
+                            tryAwaitRelease()
                             if (is2xSpeedActive) {
                                 is2xSpeedActive = false
                             }
@@ -155,7 +181,7 @@ fun NetflixMediaPlayerScreen(
             )
         }
 
-        // Top 2x Speed Pill (Non-intrusive layout)
+        // Top 2x Speed Pill
         if (is2xSpeedActive) {
             Box(
                 modifier = Modifier
@@ -218,7 +244,7 @@ fun NetflixMediaPlayerScreen(
             }
         }
 
-        // Single Floating Lock Button when Locked (No text banner, no notifications)
+        // Single Floating Lock Button when Locked
         if (isLocked) {
             Box(
                 modifier = Modifier
@@ -300,7 +326,7 @@ fun NetflixMediaPlayerScreen(
                     }
                 }
 
-                // Center Playback Controls
+                // Center Playback Controls with Animated Scale
                 Row(
                     modifier = Modifier
                         .align(Alignment.Center)
@@ -324,18 +350,25 @@ fun NetflixMediaPlayerScreen(
                         )
                     }
 
+                    // Smooth Animated Play/Pause Button
                     IconButton(
                         onClick = { isPlaying = !isPlaying },
                         modifier = Modifier
                             .size(72.dp)
                             .background(custom.primary, CircleShape)
                     ) {
-                        Icon(
-                            imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                            contentDescription = "Play/Pause",
-                            tint = custom.onPrimary,
-                            modifier = Modifier.size(44.dp)
-                        )
+                        AnimatedContent(
+                            targetState = isPlaying,
+                            transitionSpec = { fadeIn() togetherWith fadeOut() },
+                            label = "PlayPauseAnim"
+                        ) { playing ->
+                            Icon(
+                                imageVector = if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                contentDescription = "Play/Pause",
+                                tint = custom.onPrimary,
+                                modifier = Modifier.size(44.dp)
+                            )
+                        }
                     }
 
                     IconButton(
@@ -426,7 +459,7 @@ fun NetflixMediaPlayerScreen(
         }
     }
 
-    // Speed Selection Modal Bottom Sheet (No Alert Popups)
+    // Speed Selection Modal Bottom Sheet
     if (showSpeedSheet) {
         ModalBottomSheet(
             onDismissRequest = { showSpeedSheet = false },

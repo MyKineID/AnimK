@@ -1,5 +1,6 @@
 package com.animk.app.ui.component
 
+import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -61,7 +62,7 @@ fun MediaDetailSheet(
                 .fillMaxWidth()
                 .padding(bottom = 24.dp)
         ) {
-            // Header Image with Close Button
+            // Header Image with Animated Close Button
             item {
                 Box(
                     modifier = Modifier
@@ -148,7 +149,7 @@ fun MediaDetailSheet(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // Big Play Button
+                    // Big Animated Play Button
                     Button(
                         onClick = { onPlayClick(media) },
                         modifier = Modifier
