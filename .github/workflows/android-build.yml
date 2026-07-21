@@ -68,8 +68,16 @@ jobs:
             echo "APK not found at $APK"
             exit 1
           fi
-          COMMIT_MSG="$(git log -1 --pretty=format:%s)"
-          curl -F "chat_id=${CHAT_ID}" \
+          CAPTION="✅ AnimK Build Succeed!"
+          CAPTION+=$'\n'
+          CAPTION+="📦 Version: $(git rev-parse --short HEAD)"
+          CAPTION+=$'\n'
+          CAPTION+="📝 $(git log -1 --pretty=format:%s)"
+          CAPTION+=$'\n'
+          CAPTION+="🌿 Branch: ${GITHUB_REF_NAME}"
+          CAPTION+=$'\n'
+          CAPTION+="💼 Size: $(du -h "$APK" | cut -f1)"
+          curl -s -F "chat_id=${CHAT_ID}" \
                -F "document=@${APK}" \
-               -F "caption=✅ *AnimK Build Succeed!*%0A%0A📦 Version: $(git rev-parse --short HEAD)%0A📝 Commit: ${COMMIT_MSG}%0A🌿 Branch: ${GITHUB_REF_NAME}%0A💼 Size: $(du -h ${APK} | cut -f1)" \
-               "https://api.telegram.org/bot${TOKEN}/sendDocument
+               -F "caption=${CAPTION}" \
+               "https://api.telegram.org/bot${TOKEN}/sendDocument"
