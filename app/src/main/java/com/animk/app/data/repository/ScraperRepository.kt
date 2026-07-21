@@ -1,5 +1,6 @@
 package com.animk.app.data.repository
 
+import android.util.Log
 import com.animk.app.data.cache.ScraperCache
 import com.animk.app.data.model.Episode
 import com.animk.app.data.model.EpisodeSource
@@ -31,30 +32,53 @@ class ScraperRepository {
      * Search anime title on all active (config) providers, find a match, then fetch its episode list.
      * Returns a list of real Episode objects with source URLs.
      */
-    suspend fun fetchEpisodesForTitle(title: String): List<Episode> = withContext(Dispatchers.IO) {
-        ScraperCache.getEpisodes(title)?.let { return@withContext it }
+    suspend fun fetchEpisodesForTitle(
+        title: String,
+        mediaType: MediaType? = null
+    ): List<Episode> = withContext(Dispatchers.IO) {
+        val directorVersion = DirectorConfigProvider.getConfig().version
+        val cacheKey = "$title:${mediaType?.name.orEmpty()}:$directorVersion"
+        ScraperCache.getEpisodes(cacheKey)?.let { return@withContext it }
         val activeProviders = DirectorConfigProvider.getActiveProviders()
+            .filter { (_, config) -> mediaType == null || providerSupports(config, mediaType) }
 
         // Search every active provider, then merge the same episode into one row.
-        // The source list is retained so the player can offer every provider later.
+        // A provider can return a stale/empty best match, so try the next close
+        // result instead of concluding that the title has no episodes.
         val providerEpisodes = coroutineScope {
             activeProviders.map { (key, config) ->
                 async {
-                    val scraper = SourceRegistry.getSource(key) ?: return@async emptyList()
+                    val scraper = SourceRegistry.getSource(key, config) ?: return@async emptyList()
                     try {
-                        val bestMatch = scraper.search(title, config)
-                            .maxByOrNull { titleMatchScore(title, it.title) }
-                            ?.takeIf { titleMatchScore(title, it.title) >= MIN_TITLE_MATCH }
-                            ?: return@async emptyList()
-                        scraper.getEpisodes(bestMatch.id, config).map { episode ->
-                            val number = episodeNumberFrom(episode)
-                            episode.copy(
-                                episodeNumber = number,
-                                sources = listOf(EpisodeSource(key, scraper.sourceName, episode.sourceUrl))
-                            )
+                        val candidates = linkedMapOf<String, MediaItem>()
+                        val attemptedIds = mutableSetOf<String>()
+                        for (query in titleSearchVariants(title)) {
+                            scraper.search(query, config).forEach { candidate ->
+                                candidates.putIfAbsent(candidate.id, candidate)
+                            }
+                            val matches = candidates.values
+                                .filter { attemptedIds.add(it.id) }
+                                .map { it to titleMatchScore(title, it.title) }
+                                .filter { (_, score) -> score >= MIN_TITLE_MATCH }
+                                .sortedByDescending { (_, score) -> score }
+
+                            for ((match, _) in matches) {
+                                val providerEpisodes = scraper.getEpisodes(match.id, config)
+                                if (providerEpisodes.isEmpty()) continue
+                                Log.i(LOG_TAG, "$key matched ${match.title}: ${providerEpisodes.size} episode(s)")
+                                return@async providerEpisodes.map { episode ->
+                                    val number = episodeNumberFrom(episode)
+                                    episode.copy(
+                                        episodeNumber = number,
+                                        sources = listOf(EpisodeSource(key, scraper.sourceName, episode.sourceUrl))
+                                    )
+                                }
+                            }
                         }
+                        Log.i(LOG_TAG, "$key has no usable episode match for $title")
+                        emptyList()
                     } catch (e: Exception) {
-                        e.printStackTrace()
+                        Log.w(LOG_TAG, "$key failed to fetch episodes for $title", e)
                         emptyList()
                     }
                 }
@@ -62,7 +86,8 @@ class ScraperRepository {
         }
 
         mergeEpisodes(providerEpisodes.flatten()).also { episodes ->
-            if (episodes.isNotEmpty()) ScraperCache.putEpisodes(title, episodes)
+            Log.i(LOG_TAG, "merged ${episodes.size} episode(s) from ${providerEpisodes.count { it.isNotEmpty() }} provider(s) for $title")
+            if (episodes.isNotEmpty()) ScraperCache.putEpisodes(cacheKey, episodes)
         }
     }
 
@@ -90,7 +115,7 @@ class ScraperRepository {
             .distinctBy { it.sourceUrl }
         if (sources.isEmpty()) return@withContext emptyList()
 
-        val cacheKey = "episode_sources:${sources.joinToString("|") { it.sourceUrl }}"
+        val cacheKey = "episode_sources_v2:${sources.joinToString("|") { it.sourceUrl }}"
         ScraperCache.getStreams(cacheKey)?.let { return@withContext it }
         val providers = DirectorConfigProvider.getActiveProviders().toMap()
 
@@ -100,9 +125,10 @@ class ScraperRepository {
                     val matched = providers.entries.firstOrNull { (key, config) ->
                         key == source.providerKey || belongsToProvider(source.sourceUrl, config)
                     } ?: return@async emptyList()
-                    val scraper = SourceRegistry.getSource(matched.key) ?: return@async emptyList()
+                    val scraper = SourceRegistry.getSource(matched.key, matched.value) ?: return@async emptyList()
                     try {
                         val rawStreams = scraper.getStreams(source.sourceUrl, matched.value)
+                        Log.i(LOG_TAG, "${matched.key} exposed ${rawStreams.size} raw server(s)")
                         coroutineScope {
                             rawStreams.map { stream ->
                                 async {
@@ -118,7 +144,7 @@ class ScraperRepository {
                             }.awaitAll().filterNotNull()
                         }
                     } catch (e: Exception) {
-                        e.printStackTrace()
+                        Log.w(LOG_TAG, "${matched.key} failed to resolve stream page", e)
                         emptyList()
                     }
                 }
@@ -129,8 +155,14 @@ class ScraperRepository {
         streamsBySource.flatten()
             .filter { deduplicated.add(it.streamUrl) }
             .sortedBy { it.priority.ordinal }
-            .also { streams -> if (streams.isNotEmpty()) ScraperCache.putStreams(cacheKey, streams) }
+            .also { streams ->
+                Log.i(LOG_TAG, "resolved ${streams.size} native stream(s) from ${sources.size} episode source(s)")
+                if (streams.isNotEmpty()) ScraperCache.putStreams(cacheKey, streams)
+            }
     }
+
+    private fun providerSupports(config: ProviderConfig, mediaType: MediaType): Boolean =
+        config.mediaTypes.isEmpty() || config.mediaTypes.any { it.equals(mediaType.name, ignoreCase = true) }
 
     private fun belongsToProvider(url: String, config: ProviderConfig): Boolean = try {
         val episodeHost = URI(url).host?.removePrefix("www.")?.lowercase()
@@ -167,6 +199,18 @@ class ScraperRepository {
         return parsed ?: episode.episodeNumber
     }
 
+    private fun titleSearchVariants(title: String): List<String> {
+        val normalized = title.replace(Regex("\\s+"), " ").trim()
+        val withoutSubtitle = normalized
+            .replace(Regex("\\s+(?:subtitle|sub)\\s+(?:indo(?:nesia)?|english)\\b.*", RegexOption.IGNORE_CASE), "")
+            .trim()
+        val beforeColon = withoutSubtitle.substringBefore(':').trim()
+        return listOf(normalized, withoutSubtitle, beforeColon)
+            .filter { it.length >= 2 }
+            .distinct()
+            .take(3)
+    }
+
     private fun titleMatchScore(query: String, candidate: String): Float {
         val wanted = titleTokens(query)
         val found = titleTokens(candidate)
@@ -187,6 +231,7 @@ class ScraperRepository {
         }
 
     private companion object {
+        const val LOG_TAG = "AnimKScraper"
         const val MIN_TITLE_MATCH = 0.45f
         val EPISODE_NUMBER_REGEX = Regex("(?:episode|eps?|e)\\s*[-_. ]*(\\d+(?:\\.\\d+)?)", RegexOption.IGNORE_CASE)
         val TITLE_STOP_WORDS = setOf("anime", "sub", "subtitle", "indo", "indonesia", "season", "movie")
@@ -196,13 +241,13 @@ class ScraperRepository {
 
     /** Search across all active providers. Used by SearchScreen. */
     suspend fun searchAll(query: String): List<MediaItem> = withContext(Dispatchers.IO) {
-        val cacheKey = "search_all_v2:$query"
+        val cacheKey = "search_all_v3:$query"
         ScraperCache.getCatalog(cacheKey)?.let { return@withContext it }
         val activeProviders = DirectorConfigProvider.getActiveProviders()
         val results = coroutineScope {
             activeProviders.map { (key, config) ->
                 async {
-                    val scraper = SourceRegistry.getSource(key) ?: return@async emptyList()
+                    val scraper = SourceRegistry.getSource(key, config) ?: return@async emptyList()
                     runCatching { scraper.search(query, config) }.getOrElse {
                         it.printStackTrace(); emptyList()
                     }
@@ -212,11 +257,22 @@ class ScraperRepository {
         deduplicateMedia(results).also { ScraperCache.putCatalog(cacheKey, it) }
     }
 
-    /** Search by type (anime, donghua, drakor) using active config providers. */
+    /** Search a category without needlessly querying providers for other media. */
     suspend fun searchByType(query: String, type: MediaType): List<MediaItem> = withContext(Dispatchers.IO) {
-        val cacheKey = "search_type_v2:${type.name}:$query"
+        val cacheKey = "search_type_v4:${type.name}:$query"
         ScraperCache.getCatalog(cacheKey)?.let { return@withContext it }
-        searchAll(query).filter { it.type == type }.also { ScraperCache.putCatalog(cacheKey, it) }
+        val providers = DirectorConfigProvider.getActiveProviders()
+            .filter { (_, config) -> providerSupports(config, type) }
+        val results = coroutineScope {
+            providers.map { (key, config) ->
+                async {
+                    val scraper = SourceRegistry.getSource(key, config) ?: return@async emptyList()
+                    runCatching { scraper.search(query, config) }.getOrElse { emptyList() }
+                }
+            }.awaitAll().flatten()
+        }
+        deduplicateMedia(results).filter { it.type == type }
+            .also { ScraperCache.putCatalog(cacheKey, it) }
     }
 
     /**
@@ -224,13 +280,14 @@ class ScraperRepository {
      * Uses each provider's ongoing/popular page to get currently airing titles.
      */
     suspend fun fetchOngoing(limit: Int = 20): List<MediaItem> = withContext(Dispatchers.IO) {
-        val cacheKey = "ongoing_v2:$limit"
+        val cacheKey = "ongoing_v4:$limit"
         ScraperCache.getCatalog(cacheKey)?.let { return@withContext it }
         val activeProviders = DirectorConfigProvider.getActiveProviders()
+            .filter { (_, config) -> providerSupports(config, MediaType.ANIME) }
         val results = coroutineScope {
             activeProviders.map { (key, config) ->
                 async {
-                    val scraper = SourceRegistry.getSource(key) ?: return@async emptyList()
+                    val scraper = SourceRegistry.getSource(key, config) ?: return@async emptyList()
                     runCatching { scraper.search("", config) }.getOrElse {
                         it.printStackTrace(); emptyList()
                     }
@@ -246,7 +303,7 @@ class ScraperRepository {
     suspend fun hasEpisodes(title: String): Boolean = withContext(Dispatchers.IO) {
         val activeProviders = DirectorConfigProvider.getActiveProviders()
         for ((key, config) in activeProviders) {
-            val scraper = SourceRegistry.getSource(key) ?: continue
+            val scraper = SourceRegistry.getSource(key, config) ?: continue
             try {
                 val searchResults = scraper.search(title, config)
                 if (searchResults.isNotEmpty()) {

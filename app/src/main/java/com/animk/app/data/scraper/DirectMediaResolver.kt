@@ -39,6 +39,8 @@ object DirectMediaResolver {
         val path = url.substringBefore('?').lowercase(Locale.ROOT)
         return path.endsWith(".mp4") || path.endsWith(".m3u8") || path.endsWith(".webm") ||
             path.endsWith(".mkv") || url.contains("googlevideo.com/videoplayback", ignoreCase = true) ||
+            (url.contains("www.googleapis.com/drive/v3/files/", ignoreCase = true) &&
+                url.contains("alt=media", ignoreCase = true)) ||
             url.contains("mime=video%2f", ignoreCase = true) || url.contains("mime=video/", ignoreCase = true)
     }
 
@@ -49,7 +51,7 @@ object DirectMediaResolver {
         depth: Int
     ): ResolvedDirectMedia? {
         if (isDirectMediaUrl(url)) return ResolvedDirectMedia(url, inheritedHeaders)
-        if (depth > 1 || !url.startsWith("http", ignoreCase = true)) return null
+        if (depth > 2 || !url.startsWith("http", ignoreCase = true)) return null
         resolveBloggerVideo(url)?.let { direct ->
             return ResolvedDirectMedia(direct, inheritedHeaders + mapOf("Referer" to (referer ?: url)))
         }
@@ -59,6 +61,7 @@ object DirectMediaResolver {
                 additionalHeaders = inheritedHeaders + mapOf("Referer" to (referer ?: url))
             )
         }
+        resolveDailymotion(url, inheritedHeaders, referer)?.let { return it }
 
         return try {
             val request = Request.Builder().url(url)
@@ -82,9 +85,9 @@ object DirectMediaResolver {
                     return@use ResolvedDirectMedia(directUrl, mediaHeaders)
                 }
 
-                // A small number of provider pages point to one more embed page.
-                // Keep this bounded so an arbitrary page can never become a crawler.
-                if (depth == 0) {
+                // Provider pages sometimes use a harmless wrapper before the
+                // actual host. Keep this strictly bounded to two nested embeds.
+                if (depth < 2) {
                     val doc = Jsoup.parse(html, finalUrl)
                     val nestedEmbed = doc.select("iframe[src], iframe[data-src]")
                         .asSequence()
@@ -100,11 +103,50 @@ object DirectMediaResolver {
         }
     }
 
+    /** Dailymotion's public metadata endpoint exposes the signed HLS manifest. */
+    private fun resolveDailymotion(
+        url: String,
+        inheritedHeaders: Map<String, String>,
+        referer: String?
+    ): ResolvedDirectMedia? {
+        val videoId = dailymotionVideoId(url) ?: return null
+        return try {
+            val request = Request.Builder()
+                .url("https://www.dailymotion.com/player/metadata/video/$videoId")
+                .header("User-Agent", USER_AGENT)
+                .header("Referer", referer ?: url)
+                .build()
+            val metadata = client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@use ""
+                response.body?.string().orEmpty()
+            }
+            DIRECT_URL_REGEX.findAll(normalizeEscapes(metadata))
+                .map { normalizeCandidate(it.value, url) }
+                .firstOrNull(::isDirectMediaUrl)
+                ?.let { direct ->
+                    ResolvedDirectMedia(direct, inheritedHeaders + mapOf("Referer" to (referer ?: url)))
+                }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun dailymotionVideoId(url: String): String? {
+        if (!url.contains("dailymotion.com", ignoreCase = true) && !url.contains("dai.ly", ignoreCase = true)) return null
+        url.toHttpUrlOrNull()?.queryParameter("video")?.takeIf { it.isNotBlank() }?.let { return it }
+        return DAILYMOTION_ID_REGEX.find(url)?.groupValues?.getOrNull(1)
+    }
+
     private fun extractDirectUrl(rawHtml: String, pageUrl: String): String? {
         val html = normalizeEscapes(rawHtml)
 
         // Filedon embeds expose a short-lived signed MP4 URL in their hydration payload.
         DIRECT_URL_REGEX.find(html)?.value?.let { candidate ->
+            val direct = normalizeCandidate(candidate, pageUrl)
+            if (isDirectMediaUrl(direct)) return direct
+        }
+
+        GOOGLE_DRIVE_API_VIDEO_REGEX.find(html)?.value?.let { candidate ->
             val direct = normalizeCandidate(candidate, pageUrl)
             if (isDirectMediaUrl(direct)) return direct
         }
@@ -132,6 +174,12 @@ object DirectMediaResolver {
         unpackVidhide(rawHtml)?.let { unpacked ->
             HLS_VALUE_REGEX.findAll(unpacked)
                 .map { normalizeCandidate(unescapeJavaScript(it.groupValues[1]), pageUrl) }
+                .firstOrNull(::isDirectMediaUrl)
+                ?.let { return it }
+            // StreamWish/PerfectCrown use P.A.C.K.E.R. too, but call the
+            // source property "file" or an obfuscated key instead of "hls".
+            DIRECT_URL_REGEX.findAll(unpacked)
+                .map { normalizeCandidate(it.value, pageUrl) }
                 .firstOrNull(::isDirectMediaUrl)
                 ?.let { return it }
         }
@@ -233,8 +281,13 @@ object DirectMediaResolver {
         return encodeBase(number / radix, radix) + alphabet[number % radix]
     }
 
+    private val DAILYMOTION_ID_REGEX = Regex("""/(?:embed/video/|video/)([A-Za-z0-9]+)""", RegexOption.IGNORE_CASE)
     private val GOOGLE_VIDEO_REGEX = Regex("""https://[^"\s]+googlevideo\.com/videoplayback[^"\s]+""", RegexOption.IGNORE_CASE)
     private val PLAYER_FILE_REGEX = Regex("""file\s*:\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+    private val GOOGLE_DRIVE_API_VIDEO_REGEX = Regex(
+        """https://www\.googleapis\.com/drive/v3/files/[^"\s]+(?:[?&]alt=media)[^"\s]*""",
+        RegexOption.IGNORE_CASE
+    )
     private val DRIVE_FILE_ID_REGEX = Regex("""/file/d/([A-Za-z0-9_-]+)""")
     private val DRIVE_QUERY_ID_REGEX = Regex("""[?&]id=([A-Za-z0-9_-]+)""")
     private val DIRECT_URL_REGEX = Regex(

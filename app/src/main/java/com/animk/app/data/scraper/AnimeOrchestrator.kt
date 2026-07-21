@@ -19,7 +19,7 @@ class AnimeOrchestrator {
         val activeProviders = DirectorConfigProvider.getActiveProviders()
 
         for ((key, config) in activeProviders) {
-            val scraper = SourceRegistry.getSource(key) ?: continue
+            val scraper = SourceRegistry.getSource(key, config) ?: continue
             try {
                 val streams = scraper.getStreams(episodeUrl, config)
                 if (streams.isNotEmpty()) return streams

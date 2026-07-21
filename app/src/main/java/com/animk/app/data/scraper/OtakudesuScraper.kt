@@ -73,7 +73,7 @@ class OtakudesuScraper : BaseScraper {
                     // Otakudesu search also returns individual episode pages; only
                     // catalog/detail pages are valid media entries here.
                     if (!link.contains("/anime/", ignoreCase = true)) continue
-                    val title = element.selectFirst(config.selectors.title)?.text()?.trim().orEmpty()
+                    val title = cleanProviderTitle(element.selectFirst(config.selectors.title)?.text().orEmpty())
                     if (title.isBlank()) continue
                     val image = element.selectFirst(config.selectors.image)
                     val poster = image?.attr("abs:src").orEmpty()
@@ -144,22 +144,26 @@ class OtakudesuScraper : BaseScraper {
             // Extract ALL episode links from the detail page
             val epSel = config.selectors.episodeLink.ifBlank { "a[href*='/episode/']" }
             val seen = mutableSetOf<String>()
-            var count = 1f
+            var fallbackNumber = 1f
             for (el in doc.select(epSel)) {
                 val epUrl = el.attr("abs:href")
+                val rawTitle = cleanProviderTitle(el.text())
+                val number = episodeNumberFromText(rawTitle) ?: fallbackNumber
                 if (epUrl.isNotBlank() && seen.add(epUrl)) {
-                    episodes.add(Episode(id = epUrl, sourceUrl = epUrl, episodeNumber = count,
-                        title = el.text().ifEmpty { "Episode ${count.toInt()}" }))
-                    count += 1f
+                    episodes.add(
+                        Episode(
+                            id = epUrl,
+                            sourceUrl = epUrl,
+                            episodeNumber = number,
+                            title = rawTitle.ifBlank { "Episode ${number.toInt()}" }
+                        )
+                    )
+                    fallbackNumber += 1f
                 }
             }
 
-            // Reverse so episode 1 is first
-            if (episodes.size > 1) episodes.reverse()
-
-            if (episodes.isEmpty()) {
-                episodes.add(Episode(id = mediaUrl, sourceUrl = mediaUrl, episodeNumber = 1f, title = "Episode 1"))
-            }
+            // Some pages list newest first. The repository will merge/sort by
+            // explicit number; do not manufacture a detail-page "Episode 1".
         } catch (e: Exception) { e.printStackTrace() }
         episodes
     }
@@ -330,7 +334,7 @@ class OtakudesuScraper : BaseScraper {
     }
 
     private fun resolveDesustreamUrl(wrapperUrl: String): String {
-        if (!wrapperUrl.contains("desustream.info", ignoreCase = true)) return wrapperUrl
+        if (!wrapperUrl.contains("desustream", ignoreCase = true)) return wrapperUrl
         return try {
             // Wrapper URLs already contain ?id=..., so mode must be appended with '&'.
             val separator = if (wrapperUrl.contains('?')) "&" else "?"
@@ -344,11 +348,13 @@ class OtakudesuScraper : BaseScraper {
                 if (obj?.get("ok")?.jsonPrimitive?.content?.toBooleanStrictOrNull() == true) {
                     obj["video"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: wrapperUrl
                 } else {
-                    // HD wrappers expose a native <video><source>, not the JSON endpoint.
-                    Jsoup.parse(body, wrapperUrl)
-                        .selectFirst("video source[src], video[src], source[src]")
+                    // Current DesuDrive pages use either <video> or a public
+                    // Google Drive v3 alt=media URL. Both are native Media3 media.
+                    val parsed = Jsoup.parse(body, wrapperUrl)
+                    parsed.selectFirst("video source[src], video[src], source[src]")
                         ?.attr("abs:src")
                         ?.takeIf { it.isNotBlank() }
+                        ?: GOOGLE_DRIVE_API_VIDEO_REGEX.find(body)?.value
                         ?: wrapperUrl
                 }
             }
@@ -387,6 +393,7 @@ class OtakudesuScraper : BaseScraper {
         val path = url.substringBefore('?').lowercase(Locale.ROOT)
         return path.endsWith(".mp4") || path.endsWith(".m3u8") || path.endsWith(".webm") ||
             path.endsWith(".mkv") || url.contains("googlevideo.com/videoplayback", true) ||
+            (url.contains("www.googleapis.com/drive/v3/files/", true) && url.contains("alt=media", true)) ||
             url.contains("mime=video%2fmp4", true) || url.contains("mime=video/mp4", true)
     }
 
@@ -429,12 +436,15 @@ class OtakudesuScraper : BaseScraper {
         const val MIRROR_NONCE_ACTION = "aa1208d27f29ca340c92c66d1926f13f"
         const val MIRROR_IFRAME_ACTION = "2a3505c93b0035d3f455df82bf976b84"
         val GOOGLE_VIDEO_REGEX = Regex("""https://[^"\s]+googlevideo\.com/videoplayback[^"\s]+""", RegexOption.IGNORE_CASE)
+        val GOOGLE_DRIVE_API_VIDEO_REGEX = Regex("""https://www\.googleapis\.com/drive/v3/files/[^"\s]+(?:[?&]alt=media)[^"\s]*""", RegexOption.IGNORE_CASE)
         val ESCAPED_UNICODE_REGEX = Regex("""\\+u([0-9a-fA-F]{4})""")
     }
 
     /** Extract anime title from detail page. */
     private fun extractTitle(doc: Document): String? {
-        return doc.selectFirst("h1, .entry-title, .jdlflm, .infozin h2")?.text()?.trim()
-            ?: doc.title().removeSuffix(" | Otaku Desu").trim()
+        return cleanProviderTitle(
+            doc.selectFirst("h1, .entry-title, .jdlflm, .infozin h2")?.text()
+                ?: doc.title().removeSuffix(" | Otaku Desu")
+        ).ifBlank { null }
     }
 }

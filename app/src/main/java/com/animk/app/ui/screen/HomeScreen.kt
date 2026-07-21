@@ -51,6 +51,8 @@ fun HomeScreen(
     var trendingAnime by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     var donghuaList by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     var drakorList by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
+    var drachinList by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
+    var japaneseDramaList by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     var continueWatching by remember { mutableStateOf<List<WatchHistoryEntry>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
 
@@ -75,6 +77,8 @@ fun HomeScreen(
             // These sections do not block the home screen or its first interaction.
             launch { donghuaList = scraperRepo.searchByType("", MediaType.DONGHUA).take(20) }
             launch { drakorList = scraperRepo.searchByType("", MediaType.DRAKOR).take(20) }
+            launch { drachinList = scraperRepo.searchByType("", MediaType.DRACHIN).take(20) }
+            launch { japaneseDramaList = scraperRepo.searchByType("", MediaType.JDRAMA).take(20) }
         }
     }
 
@@ -240,6 +244,30 @@ fun HomeScreen(
                         title = "Korean Drama",
                         icon = Icons.Filled.Favorite,
                         items = drakorList,
+                        onMediaClick = onMediaClick,
+                        collapsedCount = 6
+                    )
+                }
+            }
+
+            item {
+                if (drachinList.isNotEmpty()) {
+                    MediaRow(
+                        title = "Chinese Drama",
+                        icon = Icons.Filled.Movie,
+                        items = drachinList,
+                        onMediaClick = onMediaClick,
+                        collapsedCount = 6
+                    )
+                }
+            }
+
+            item {
+                if (japaneseDramaList.isNotEmpty()) {
+                    MediaRow(
+                        title = "Japanese Drama",
+                        icon = Icons.Filled.Favorite,
+                        items = japaneseDramaList,
                         onMediaClick = onMediaClick,
                         collapsedCount = 6
                     )

@@ -72,7 +72,7 @@ fun MediaDetailSheet(
     LaunchedEffect(media.title) {
         isLoadingEpisodes = true
         try {
-            val episodes = scraperRepository.fetchEpisodesForTitle(media.title)
+            val episodes = scraperRepository.fetchEpisodesForTitle(media.title, media.type)
             scrapedEpisodes = episodes
             val providerCount = episodes.flatMap { it.sources }.map { it.providerKey }.filter { it.isNotBlank() }.distinct().size
             episodeSource = if (episodes.isNotEmpty()) {

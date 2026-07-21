@@ -19,9 +19,9 @@ class DrakorScraper : BaseScraper {
         try {
             val url = config.domain.trimEnd('/') + config.searchPath + URLEncoder.encode(query, "UTF-8")
             val request = Request.Builder().url(url).build()
-            val response = client.newCall(request).execute()
-            val html = response.body?.string() ?: return@withContext emptyList()
-            val doc = Jsoup.parse(html)
+            val html = client.newCall(request).execute().use { it.body?.string() }
+                ?: return@withContext emptyList()
+            val doc = Jsoup.parse(html, config.domain)
 
             val selList = config.selectors.list.ifEmpty { ".item, article" }
             val selTitle = config.selectors.title.ifEmpty { "h2, .entry-title, .title" }
@@ -32,8 +32,9 @@ class DrakorScraper : BaseScraper {
             for (element in items) {
                 val linkEl = element.selectFirst(selLink)
                 val mediaUrl = linkEl?.attr("abs:href") ?: ""
-                val title = element.select(selTitle).text()
-                val posterUrl = element.select(selImage).attr("src")
+                val title = cleanProviderTitle(element.selectFirst(selTitle)?.text().orEmpty())
+                val posterUrl = element.selectFirst(selImage)?.attr("abs:src").orEmpty()
+                    .ifBlank { element.selectFirst(selImage)?.attr("abs:data-src").orEmpty() }
 
                 if (title.isNotBlank() && mediaUrl.isNotBlank()) {
                     list.add(
@@ -59,33 +60,31 @@ class DrakorScraper : BaseScraper {
         val episodes = mutableListOf<Episode>()
         try {
             val request = Request.Builder().url(mediaUrl).build()
-            val response = client.newCall(request).execute()
-            val html = response.body?.string() ?: return@withContext emptyList()
-            val doc = Jsoup.parse(html)
+            val html = client.newCall(request).execute().use { it.body?.string() }
+                ?: return@withContext emptyList()
+            val doc = Jsoup.parse(html, mediaUrl)
 
             val epSelector = config.selectors.episodeLink.ifEmpty { ".episodelist ul li a, a[href*='/episode/']" }
             val epElements = doc.select(epSelector)
-            var count = 1f
+            var fallbackNumber = 1f
             for (el in epElements) {
                 val epUrl = el.attr("abs:href")
-                val epTitle = el.text().ifEmpty { "Episode $count" }
+                val epTitle = cleanProviderTitle(el.text())
+                val number = episodeNumberFromText(epTitle) ?: fallbackNumber
                 if (epUrl.isNotBlank() && !episodes.any { it.sourceUrl == epUrl }) {
                     episodes.add(
                         Episode(
                             id = epUrl,
                             sourceUrl = epUrl,
-                            episodeNumber = count,
-                            title = epTitle
+                            episodeNumber = number,
+                            title = epTitle.ifBlank { "Episode ${number.toInt()}" }
                         )
                     )
-                    count += 1f
+                    fallbackNumber += 1f
                 }
             }
         } catch (e: Exception) {
             e.printStackTrace()
-        }
-        if (episodes.isEmpty()) {
-            episodes.add(Episode(id = mediaUrl, sourceUrl = mediaUrl, episodeNumber = 1f, title = "Episode 1"))
         }
         episodes
     }
@@ -138,28 +137,8 @@ class DrakorScraper : BaseScraper {
                 }
             }
 
-            if (addedUrls.add(episodeUrl)) {
-                streams.add(
-                    StreamData(
-                        serverName = "JuraganFilm Web Player (Full Page)",
-                        streamUrl = episodeUrl,
-                        isIframe = true,
-                        resolution = StreamResolution.HD_720p,
-                        priority = ServerPriority.LOW
-                    )
-                )
-            }
         } catch (e: Exception) {
             e.printStackTrace()
-            streams.add(
-                StreamData(
-                    serverName = "JuraganFilm Web Player (Fallback)",
-                    streamUrl = episodeUrl,
-                    isIframe = true,
-                    resolution = StreamResolution.HD_720p,
-                    priority = ServerPriority.LOW
-                )
-            )
         }
         streams
     }

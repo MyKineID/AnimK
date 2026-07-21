@@ -87,6 +87,8 @@ fun NetflixMediaPlayerScreen(
     var availableStreams by remember { mutableStateOf<List<StreamData>>(emptyList()) }
     var activeStream by remember { mutableStateOf<StreamData?>(null) }
     var isFetchingStreams by remember { mutableStateOf(true) }
+    var failedStreamUrls by remember(episodeSourceUrl) { mutableStateOf(emptySet<String>()) }
+    var playErrorMessage by remember { mutableStateOf("") }
 
     // ExoPlayer state
     var exoPlayer by remember { mutableStateOf<ExoPlayer?>(null) }
@@ -97,6 +99,15 @@ fun NetflixMediaPlayerScreen(
     var isScrubbing by remember { mutableStateOf(false) }
     var scrubPositionMs by remember { mutableFloatStateOf(0f) }
     var playError by remember { mutableStateOf(false) }
+
+    fun tryNextStream(failedUrl: String? = activeStream?.streamUrl) {
+        failedUrl?.let { failedStreamUrls = failedStreamUrls + it }
+        val next = availableStreams.firstOrNull { it.streamUrl !in failedStreamUrls }
+        activeStream = next
+        playError = next == null
+        playErrorMessage = if (next == null) "Semua server direct gagal diputar" else ""
+    }
+
     var resumePositionMs by remember(episodeSourceUrl) {
         mutableLongStateOf(WatchHistoryStore.positionFor(episodeSourceUrl))
     }
@@ -124,8 +135,10 @@ fun NetflixMediaPlayerScreen(
             listOf(EpisodeSource(providerKey = "", providerName = "", sourceUrl = episodeSourceUrl))
         }
         val streams = scraperRepository.fetchStreamsForEpisodes(sources, media.title)
+        failedStreamUrls = emptySet()
         availableStreams = streams
         activeStream = streams.firstOrNull()
+        playErrorMessage = if (streams.isEmpty()) "Tidak ada stream direct yang berhasil diambil" else ""
         isFetchingStreams = false
     }
 
@@ -182,6 +195,7 @@ fun NetflixMediaPlayerScreen(
     LaunchedEffect(activeStream) {
         activeStream?.let { stream ->
             playError = false
+            playErrorMessage = ""
             resumePositionMs = WatchHistoryStore.positionFor(episodeSourceUrl)
             hasRestoredPosition = false
             // Provider pages are never rendered in the app. Only direct media URLs
@@ -276,7 +290,8 @@ fun NetflixMediaPlayerScreen(
                                     syncPlaybackUi(player as ExoPlayer)
                                 }
                                 override fun onPlayerError(error: PlaybackException) {
-                                    playError = true
+                                    playErrorMessage = error.errorCodeName
+                                    tryNextStream()
                                 }
                             })
 
@@ -359,14 +374,22 @@ fun NetflixMediaPlayerScreen(
                         Icon(Icons.Filled.Warning, contentDescription = null, tint = Color.Yellow, modifier = Modifier.size(36.dp))
                         Spacer(Modifier.height(8.dp))
                         Text("Video playback error", color = Color.White, fontWeight = FontWeight.Bold)
+                        if (playErrorMessage.isNotBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(playErrorMessage, color = Color.White.copy(alpha = 0.72f), fontSize = 11.sp)
+                        }
                         Spacer(Modifier.height(8.dp))
                         Button(
                             onClick = {
-                                playError = false
-                                exoPlayer?.apply { stop(); prepare(); playWhenReady = true }
+                                if (availableStreams.any { it.streamUrl !in failedStreamUrls }) {
+                                    tryNextStream()
+                                } else {
+                                    playError = false
+                                    exoPlayer?.apply { stop(); prepare(); playWhenReady = true }
+                                }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = custom.primary)
-                        ) { Text("Coba lagi") }
+                        ) { Text(if (availableStreams.any { it.streamUrl !in failedStreamUrls }) "Coba server lain" else "Coba lagi") }
                     }
                 }
             }
@@ -377,6 +400,10 @@ fun NetflixMediaPlayerScreen(
                         Icon(Icons.Filled.Warning, contentDescription = null, tint = Color.Yellow, modifier = Modifier.size(36.dp))
                         Spacer(Modifier.height(8.dp))
                         Text("No active stream servers found", color = Color.White, fontWeight = FontWeight.Bold)
+                        if (playErrorMessage.isNotBlank()) {
+                            Spacer(Modifier.height(5.dp))
+                            Text(playErrorMessage, color = Color.White.copy(alpha = 0.72f), fontSize = 11.sp)
+                        }
                     }
                 }
             }

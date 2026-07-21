@@ -45,7 +45,7 @@ fun SearchScreen(
 
     val aniListService = remember { AniListApiService() }
     val scraperRepo = remember { ScraperRepository() }
-    val quickQueries = remember { listOf("Action", "Isekai", "Romance", "Comedy", "Donghua") }
+    val quickQueries = remember { listOf("Action", "Isekai", "Romance", "Donghua", "K-Drama") }
 
     LaunchedEffect(Unit) {
         suggestions = aniListService.getTrendingAnime(page = 1, perPage = 18)
@@ -90,13 +90,13 @@ fun SearchScreen(
     ) {
         Spacer(Modifier.height(10.dp))
         Text("Cari tontonan", color = custom.textPrimary, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-        Text("Anime, donghua, dan drama dari semua sumber", color = custom.textMuted, fontSize = 13.sp)
+        Text("Anime, donghua, K-drama, C-drama, dan J-drama dari semua sumber", color = custom.textMuted, fontSize = 13.sp)
         Spacer(Modifier.height(14.dp))
 
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = { Text("Judul anime, karakter, atau genre", color = custom.textMuted) },
+            placeholder = { Text("Judul anime atau drama", color = custom.textMuted) },
             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = custom.primary) },
             trailingIcon = {
                 if (searchQuery.isNotEmpty()) {

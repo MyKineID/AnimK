@@ -20,9 +20,9 @@ class DonghuaScraper : BaseScraper {
         try {
             val url = config.domain.trimEnd('/') + config.searchPath + URLEncoder.encode(query, "UTF-8")
             val request = Request.Builder().url(url).build()
-            val response = client.newCall(request).execute()
-            val html = response.body?.string() ?: return@withContext emptyList()
-            val doc = Jsoup.parse(html)
+            val html = client.newCall(request).execute().use { it.body?.string() }
+                ?: return@withContext emptyList()
+            val doc = Jsoup.parse(html, config.domain)
 
             val selList = config.selectors.list.ifEmpty { "article.animposx, div.bs" }
             val selTitle = config.selectors.title.ifEmpty { ".title, h2, .tt" }
@@ -33,8 +33,9 @@ class DonghuaScraper : BaseScraper {
             for (element in items) {
                 val linkEl = element.selectFirst(selLink)
                 val mediaUrl = linkEl?.attr("abs:href") ?: ""
-                val title = element.select(selTitle).text()
-                val posterUrl = element.select(selImage).attr("src")
+                val title = cleanProviderTitle(element.selectFirst(selTitle)?.text().orEmpty())
+                val posterUrl = element.selectFirst(selImage)?.attr("abs:src").orEmpty()
+                    .ifBlank { element.selectFirst(selImage)?.attr("abs:data-src").orEmpty() }
 
                 if (title.isNotBlank() && mediaUrl.isNotBlank()) {
                     list.add(
@@ -60,9 +61,9 @@ class DonghuaScraper : BaseScraper {
         val episodes = mutableListOf<Episode>()
         try {
             val request = Request.Builder().url(mediaUrl).build()
-            val response = client.newCall(request).execute()
-            val html = response.body?.string() ?: return@withContext emptyList()
-            val doc = Jsoup.parse(html)
+            val html = client.newCall(request).execute().use { it.body?.string() }
+                ?: return@withContext emptyList()
+            val doc = Jsoup.parse(html, mediaUrl)
 
             val epSelector = config.selectors.episodeLink.ifEmpty { ".eplister ul li a, a[href*='/episode/']" }
             val epElements = doc.select(epSelector)
@@ -70,18 +71,20 @@ class DonghuaScraper : BaseScraper {
             for (el in epElements) {
                 val epUrl = el.attr("abs:href")
                 val detectedNumber = el.attr("data-number").toFloatOrNull()
-                    ?: Regex("(?:episode|ep)\\s*(\\d+(?:\\.\\d+)?)", RegexOption.IGNORE_CASE)
-                        .find(el.text())?.groupValues?.getOrNull(1)?.toFloatOrNull()
+                    ?: episodeNumberFromText(el.text())
                 val number = detectedNumber ?: count
-                val epTitle = el.select(".epl-num, .epl-title").text().ifEmpty { el.text() }
+                val epTitle = cleanProviderTitle(el.select(".epl-num, .epl-title").text().ifEmpty { el.text() })
                 if (epUrl.isNotBlank() && !episodes.any { it.sourceUrl == epUrl }) {
                     episodes.add(
                         Episode(
                             id = epUrl,
                             sourceUrl = epUrl,
                             episodeNumber = number,
-                            title = epTitle.takeIf { it.contains("episode", ignoreCase = true) }
-                                ?: "Episode ${if (number % 1f == 0f) number.toInt() else number}"
+                            title = when {
+                                detectedNumber != null && detectedNumber <= 0f -> "Special"
+                                epTitle.contains("episode", ignoreCase = true) -> epTitle
+                                else -> "Episode ${if (number % 1f == 0f) number.toInt() else number}"
+                            }
                         )
                     )
                     count += 1f
@@ -90,9 +93,8 @@ class DonghuaScraper : BaseScraper {
         } catch (e: Exception) {
             e.printStackTrace()
         }
-        if (episodes.isEmpty()) {
-            episodes.add(Episode(id = mediaUrl, sourceUrl = mediaUrl, episodeNumber = 1f, title = "Episode 1"))
-        }
+        // A detail page is not an episode page. Never invent Episode 1 here;
+        // doing so sends Media3 to HTML and creates a misleading empty player.
         episodes
     }
 

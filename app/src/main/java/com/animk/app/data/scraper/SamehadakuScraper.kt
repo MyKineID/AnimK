@@ -21,9 +21,9 @@ class SamehadakuScraper : BaseScraper {
         try {
             val url = config.domain.trimEnd('/') + config.searchPath + URLEncoder.encode(query, "UTF-8")
             val request = Request.Builder().url(url).build()
-            val response = client.newCall(request).execute()
-            val html = response.body?.string() ?: return@withContext emptyList()
-            val doc = Jsoup.parse(html)
+            val html = client.newCall(request).execute().use { it.body?.string() }
+                ?: return@withContext emptyList()
+            val doc = Jsoup.parse(html, config.domain)
 
             val selList = config.selectors.list.ifEmpty { "article.animposx, div.animposx" }
             val selTitle = config.selectors.title.ifEmpty { ".title, h2" }
@@ -34,8 +34,9 @@ class SamehadakuScraper : BaseScraper {
             for (element in items) {
                 val linkEl = element.selectFirst(selLink)
                 val mediaUrl = linkEl?.attr("abs:href") ?: ""
-                val title = element.select(selTitle).text()
-                val posterUrl = element.select(selImage).attr("src")
+                val title = cleanProviderTitle(element.selectFirst(selTitle)?.text().orEmpty())
+                val posterUrl = element.selectFirst(selImage)?.attr("abs:src").orEmpty()
+                    .ifBlank { element.selectFirst(selImage)?.attr("abs:data-src").orEmpty() }
 
                 if (title.isNotBlank() && mediaUrl.isNotBlank()) {
                     list.add(
@@ -61,33 +62,31 @@ class SamehadakuScraper : BaseScraper {
         val episodes = mutableListOf<Episode>()
         try {
             val request = Request.Builder().url(mediaUrl).build()
-            val response = client.newCall(request).execute()
-            val html = response.body?.string() ?: return@withContext emptyList()
-            val doc = Jsoup.parse(html)
+            val html = client.newCall(request).execute().use { it.body?.string() }
+                ?: return@withContext emptyList()
+            val doc = Jsoup.parse(html, mediaUrl)
 
             val epSelector = config.selectors.episodeLink.ifEmpty { ".lepisodes ul li a, .epsselect option, a[href*='/episode/']" }
             val epElements = doc.select(epSelector)
-            var count = 1f
+            var fallbackNumber = 1f
             for (el in epElements) {
-                val epUrl = el.attr("abs:href").ifEmpty { el.attr("value") }
-                val epTitle = el.text().ifEmpty { "Episode $count" }
+                val epUrl = el.attr("abs:href").ifEmpty { el.attr("abs:value") }
+                val epTitle = cleanProviderTitle(el.text())
+                val number = episodeNumberFromText(epTitle) ?: fallbackNumber
                 if (epUrl.startsWith("http") && !episodes.any { it.sourceUrl == epUrl }) {
                     episodes.add(
                         Episode(
                             id = epUrl,
                             sourceUrl = epUrl,
-                            episodeNumber = count,
-                            title = epTitle
+                            episodeNumber = number,
+                            title = epTitle.ifBlank { "Episode ${number.toInt()}" }
                         )
                     )
-                    count += 1f
+                    fallbackNumber += 1f
                 }
             }
         } catch (e: Exception) {
             e.printStackTrace()
-        }
-        if (episodes.isEmpty()) {
-            episodes.add(Episode(id = mediaUrl, sourceUrl = mediaUrl, episodeNumber = 1f, title = "Episode 1"))
         }
         episodes
     }

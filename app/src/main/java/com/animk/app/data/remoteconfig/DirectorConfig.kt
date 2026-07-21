@@ -18,6 +18,9 @@ data class DirectorConfig(
 data class ProviderConfig(
     val active: Boolean = false,
     val priority: Int = Int.MAX_VALUE,
+    @SerialName("display_name") val displayName: String = "",
+    /** Content categories supported by this source, e.g. ANIME or DONGHUA. */
+    @SerialName("media_types") val mediaTypes: List<String> = emptyList(),
     val domain: String = "",
     /** Alternate hosts used after a provider redirects to a current mirror domain. */
     val aliases: List<String> = emptyList(),

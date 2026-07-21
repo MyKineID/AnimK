@@ -4,7 +4,7 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 enum class MediaType {
-    ANIME, DONGHUA, DRAKOR
+    ANIME, DONGHUA, DRAKOR, DRACHIN, JDRAMA
 }
 
 @Serializable
