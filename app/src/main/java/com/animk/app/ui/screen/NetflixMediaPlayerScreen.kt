@@ -1,10 +1,8 @@
 package com.animk.app.ui.screen
 
 import android.content.pm.ActivityInfo
-import android.webkit.WebChromeClient
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.graphics.Bitmap
+import android.webkit.*
 import androidx.activity.ComponentActivity
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
@@ -61,6 +59,7 @@ fun NetflixMediaPlayerScreen(
     var availableStreams by remember { mutableStateOf<List<StreamData>>(emptyList()) }
     var activeStream by remember { mutableStateOf<StreamData?>(null) }
     var isFetchingStreams by remember { mutableStateOf(true) }
+    var isWebViewLoading by remember { mutableStateOf(true) }
 
     LaunchedEffect(episodeSourceUrl, media.title) {
         scope.launch {
@@ -219,22 +218,55 @@ fun NetflixMediaPlayerScreen(
                     )
                 }
         ) {
-            // WebView Video Player
+            // Native WebView Video Player
             AndroidView(
                 factory = { ctx ->
                     WebView(ctx).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.databaseEnabled = true
-                        settings.useWideViewPort = true
-                        settings.loadWithOverviewMode = true
-                        settings.javaScriptCanOpenWindowsAutomatically = true
-                        settings.mediaPlaybackRequiresUserGesture = false
-                        settings.allowContentAccess = true
-                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                        settings.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                        settings.apply {
+                            javaScriptEnabled = true
+                            domStorageEnabled = true
+                            databaseEnabled = true
+                            useWideViewPort = true
+                            loadWithOverviewMode = true
+                            javaScriptCanOpenWindowsAutomatically = false
+                            mediaPlaybackRequiresUserGesture = false
+                            allowContentAccess = true
+                            allowFileAccess = true
+                            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                            userAgentString = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+                        }
                         webChromeClient = WebChromeClient()
-                        webViewClient = WebViewClient()
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                isWebViewLoading = true
+                                super.onPageStarted(view, url, favicon)
+                            }
+
+                            override fun onPageFinished(view: WebView?, url: String?) {
+                                isWebViewLoading = false
+                                // Auto-trigger video play inside webview if available
+                                view?.evaluateJavascript("if (document.querySelector('video')) { document.querySelector('video').play(); }", null)
+                                super.onPageFinished(view, url)
+                            }
+
+                            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                                val url = request?.url?.toString() ?: return false
+                                // Allow stream domains and embeds to load inside WebView, block popup ads
+                                if (url.startsWith("http") && (
+                                    url.contains("kuramanime") || url.contains("samehadaku") ||
+                                    url.contains("otakudesu") || url.contains("anichin") ||
+                                    url.contains("juraganfilm") || url.contains("bedadrive") ||
+                                    url.contains("dood") || url.contains("streamwish") ||
+                                    url.contains("mega") || url.contains("pixeldrain") ||
+                                    url.contains("player") || url.contains("embed") ||
+                                    url.contains("stream") || url.contains("video")
+                                )) {
+                                    return false
+                                }
+                                // Block external popup ad redirects
+                                return true
+                            }
+                        }
                         webViewRef = this
                     }
                 },
@@ -242,27 +274,8 @@ fun NetflixMediaPlayerScreen(
                     activeStream?.let { stream ->
                         if (stream.streamUrl != lastLoadedUrl) {
                             lastLoadedUrl = stream.streamUrl
-                            if (stream.isIframe) {
-                                if (stream.streamUrl.startsWith("http")) {
-                                    val html = """
-                                        <!DOCTYPE html>
-                                        <html>
-                                        <head>
-                                            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-                                            <style>
-                                                html, body { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #000; overflow: hidden; display: flex; align-items: center; justify-content: center; }
-                                                iframe { width: 100%; height: 100%; border: none; }
-                                            </style>
-                                        </head>
-                                        <body>
-                                            <iframe src="${stream.streamUrl}" allowfullscreen="true" allow="autoplay; fullscreen; picture-in-picture"></iframe>
-                                        </body>
-                                        </html>
-                                    """.trimIndent()
-                                    webView.loadDataWithBaseURL(stream.streamUrl, html, "text/html", "UTF-8", null)
-                                } else {
-                                    webView.loadUrl(stream.streamUrl)
-                                }
+                            if (stream.streamUrl.startsWith("http")) {
+                                webView.loadUrl(stream.streamUrl)
                             } else {
                                 val html = """
                                     <!DOCTYPE html>
@@ -287,7 +300,7 @@ fun NetflixMediaPlayerScreen(
             )
 
             // Loading indicator
-            if (isFetchingStreams) {
+            if (isFetchingStreams || isWebViewLoading) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
@@ -295,7 +308,7 @@ fun NetflixMediaPlayerScreen(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         CircularProgressIndicator(color = custom.primary)
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text("Gathering servers from all providers...", color = Color.White, fontSize = 13.sp)
+                        Text("Loading video stream...", color = Color.White, fontSize = 13.sp)
                     }
                 }
             } else if (availableStreams.isEmpty()) {
@@ -580,9 +593,10 @@ fun NetflixMediaPlayerScreen(
                                     fontSize = 14.sp
                                 )
                                 Text(
-                                    text = if (stream.isIframe) "Embed Stream" else "Direct MP4 Stream",
+                                    text = stream.streamUrl,
                                     color = custom.textMuted,
-                                    fontSize = 11.sp
+                                    fontSize = 11.sp,
+                                    maxLines = 1
                                 )
                             }
                             if (activeStream == stream) {
