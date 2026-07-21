@@ -6,11 +6,7 @@
 -dontwarn org.jsoup.**
 -dontwarn io.github.jan.**
 
--keep class org.slf4j.** { *; }
--keep class io.ktor.** { *; }
--keep class okhttp3.** { *; }
--keep class org.jsoup.** { *; }
--keep class io.github.jan.** { *; }
+# Do not keep whole dependency packages: R8 can strip their unused implementation.
 
 # Keep Kotlinx Serialization data models
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod

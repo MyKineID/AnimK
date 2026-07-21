@@ -52,6 +52,7 @@ import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import com.animk.app.data.model.MediaItem
 import com.animk.app.data.model.StreamData
+import com.animk.app.data.model.StreamResolution
 import com.animk.app.data.playback.WatchHistoryStore
 import com.animk.app.data.repository.ScraperRepository
 import com.animk.app.ui.theme.LocalCustomColors
@@ -59,6 +60,14 @@ import kotlinx.coroutines.delay
 
 private const val BLOGGER_PLAYER_USER_AGENT =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36"
+
+private fun StreamResolution.displayName(): String = when (this) {
+    StreamResolution.HD_1080p -> "1080p"
+    StreamResolution.HD_720p -> "720p"
+    StreamResolution.SD_480p -> "480p"
+    StreamResolution.SD_360p -> "360p"
+    StreamResolution.UNKNOWN -> "Auto"
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -80,6 +89,11 @@ fun NetflixMediaPlayerScreen(
     // ExoPlayer state
     var exoPlayer by remember { mutableStateOf<ExoPlayer?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
+    var playbackPositionMs by remember { mutableLongStateOf(0L) }
+    var playbackDurationMs by remember { mutableLongStateOf(0L) }
+    var bufferedPositionMs by remember { mutableLongStateOf(0L) }
+    var isScrubbing by remember { mutableStateOf(false) }
+    var scrubPositionMs by remember { mutableFloatStateOf(0f) }
     var playError by remember { mutableStateOf(false) }
     var webView by remember { mutableStateOf<WebView?>(null) }
     var resumePositionMs by remember(episodeSourceUrl) {
@@ -89,6 +103,18 @@ fun NetflixMediaPlayerScreen(
 
     fun saveProgress(positionMs: Long, durationMs: Long) {
         WatchHistoryStore.saveProgress(media, episodeSourceUrl, media.title, positionMs, durationMs)
+    }
+
+    fun syncPlaybackUi(player: ExoPlayer) {
+        playbackPositionMs = player.currentPosition.coerceAtLeast(0L)
+        playbackDurationMs = player.duration.coerceAtLeast(0L)
+        bufferedPositionMs = player.bufferedPosition.coerceAtLeast(playbackPositionMs)
+        isPlaying = player.isPlaying
+    }
+
+    fun formatTime(milliseconds: Long): String {
+        val totalSeconds = (milliseconds.coerceAtLeast(0L) / 1000).toInt()
+        return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
     }
 
     LaunchedEffect(episodeSourceUrl, media.title) {
@@ -176,9 +202,17 @@ fun NetflixMediaPlayerScreen(
     }
 
     LaunchedEffect(exoPlayer, activeStream) {
+        var lastSavedAt = 0L
         while (true) {
-            delay(10_000)
-            exoPlayer?.takeIf { it.isPlaying }?.let { saveProgress(it.currentPosition, it.duration) }
+            delay(400)
+            exoPlayer?.let { player ->
+                syncPlaybackUi(player)
+                val now = System.currentTimeMillis()
+                if (player.isPlaying && now - lastSavedAt >= 10_000L) {
+                    saveProgress(player.currentPosition, player.duration)
+                    lastSavedAt = now
+                }
+            }
         }
     }
 
@@ -346,6 +380,9 @@ fun NetflixMediaPlayerScreen(
                                 override fun onIsPlayingChanged(playing: Boolean) {
                                     isPlaying = playing
                                 }
+                                override fun onEvents(player: Player, events: Player.Events) {
+                                    syncPlaybackUi(player as ExoPlayer)
+                                }
                                 override fun onPlayerError(error: PlaybackException) {
                                     playError = true
                                 }
@@ -475,15 +512,59 @@ fun NetflixMediaPlayerScreen(
                         Box(modifier = Modifier.align(Alignment.Center).fillMaxSize().clickable {
                             exoPlayer?.let { if (it.isPlaying) it.pause() else it.play() }
                         })
+                        Row(
+                            modifier = Modifier.align(Alignment.Center),
+                            horizontalArrangement = Arrangement.spacedBy(28.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = { exoPlayer?.seekTo((exoPlayer?.currentPosition ?: 0L) - 10_000L) }, modifier = Modifier.size(52.dp)) {
+                                Icon(Icons.Filled.Replay10, contentDescription = "Back 10 seconds", tint = Color.White, modifier = Modifier.size(38.dp))
+                            }
+                            IconButton(
+                                onClick = { exoPlayer?.let { if (it.isPlaying) it.pause() else it.play() } },
+                                modifier = Modifier.size(74.dp).background(Color.White.copy(alpha = 0.9f), CircleShape)
+                            ) {
+                                Icon(if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, contentDescription = if (isPlaying) "Pause" else "Play", tint = Color.Black, modifier = Modifier.size(52.dp))
+                            }
+                            IconButton(onClick = { exoPlayer?.seekTo((exoPlayer?.currentPosition ?: 0L) + 10_000L) }, modifier = Modifier.size(52.dp)) {
+                                Icon(Icons.Filled.Forward10, contentDescription = "Forward 10 seconds", tint = Color.White, modifier = Modifier.size(38.dp))
+                            }
+                        }
                     }
 
                     Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                        val sliderMax = playbackDurationMs.coerceAtLeast(1L).toFloat()
+                        val sliderValue = if (isScrubbing) scrubPositionMs else playbackPositionMs.coerceAtMost(playbackDurationMs).toFloat()
+                        Slider(
+                            value = sliderValue.coerceIn(0f, sliderMax),
+                            onValueChange = { value ->
+                                isScrubbing = true
+                                scrubPositionMs = value
+                            },
+                            onValueChangeFinished = {
+                                exoPlayer?.seekTo(scrubPositionMs.toLong())
+                                isScrubbing = false
+                            },
+                            valueRange = 0f..sliderMax,
+                            enabled = playbackDurationMs > 0L,
+                            colors = SliderDefaults.colors(
+                                thumbColor = custom.primary,
+                                activeTrackColor = custom.primary,
+                                inactiveTrackColor = Color.White.copy(alpha = 0.35f)
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(formatTime(if (isScrubbing) scrubPositionMs.toLong() else playbackPositionMs), color = Color.White, fontSize = 12.sp)
+                            Text(formatTime(playbackDurationMs), color = Color.White, fontSize = 12.sp)
+                        }
+                        Spacer(Modifier.height(2.dp))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Row {
                                 TextButton(onClick = { showServerSheet = true }) {
                                     Icon(Icons.Filled.Dns, contentDescription = null, tint = custom.primary)
                                     Spacer(Modifier.width(4.dp))
-                                    Text(activeStream?.serverName ?: "Select Server", color = Color.White, fontWeight = FontWeight.Bold)
+                                    Text("${activeStream?.serverName ?: "Select Server"} • ${activeStream?.resolution?.displayName() ?: "Auto"}", color = Color.White, fontWeight = FontWeight.Bold)
                                     Spacer(Modifier.width(4.dp))
                                     Surface(color = custom.primary.copy(alpha = 0.2f), shape = RoundedCornerShape(4.dp)) {
                                         Text("${availableStreams.size}", color = custom.primary, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
@@ -537,14 +618,14 @@ fun NetflixMediaPlayerScreen(
                     Spacer(Modifier.width(8.dp))
                     Text("Select Stream Server (${availableStreams.size})", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = custom.textPrimary)
                 }
-                Text("If playback fails, try another server or switch to WebView.", fontSize = 12.sp, color = custom.textMuted, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
+                Text("Pilih mirror dan resolusi yang tersedia untuk custom player.", fontSize = 12.sp, color = custom.textMuted, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
                 availableStreams.forEach { stream ->
                     Surface(color = if (activeStream == stream) custom.primary.copy(alpha = 0.15f) else custom.cardSurface,
                         shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { activeStream = stream; showServerSheet = false }) {
                         Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Column {
-                                Text(text = stream.serverName, color = if (activeStream == stream) custom.primary else custom.textPrimary, fontSize = 14.sp)
-                                Text(text = stream.streamUrl, color = custom.textMuted, fontSize = 11.sp, maxLines = 1)
+                                Text(text = "${stream.serverName} • ${stream.resolution.displayName()}", color = if (activeStream == stream) custom.primary else custom.textPrimary, fontSize = 14.sp)
+                                Text(text = "Direct Media3 stream", color = custom.textMuted, fontSize = 11.sp, maxLines = 1)
                             }
                             if (activeStream == stream) Icon(Icons.Filled.Check, contentDescription = null, tint = custom.primary)
                         }
