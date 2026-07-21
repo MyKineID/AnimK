@@ -36,6 +36,13 @@ data class MediaItem(
 )
 
 @Serializable
+data class EpisodeSource(
+    val providerKey: String,
+    val providerName: String,
+    val sourceUrl: String
+)
+
+@Serializable
 data class Episode(
     val id: String,
     val sourceUrl: String,
@@ -43,7 +50,9 @@ data class Episode(
     val title: String,
     val thumbnailUrl: String? = null,
     val description: String = "",
-    val duration: String = "24m"
+    val duration: String = "24m",
+    /** Same episode from other active providers, merged by ScraperRepository. */
+    val sources: List<EpisodeSource> = emptyList()
 )
 
 @Serializable
@@ -53,5 +62,7 @@ data class StreamData(
     val isIframe: Boolean,
     val resolution: StreamResolution,
     val priority: ServerPriority,
-    val additionalHeaders: Map<String, String> = emptyMap()
+    val additionalHeaders: Map<String, String> = emptyMap(),
+    /** Display-only provider name, so identical titles can expose every source. */
+    val providerName: String = ""
 )

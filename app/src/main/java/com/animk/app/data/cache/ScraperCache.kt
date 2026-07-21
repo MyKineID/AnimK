@@ -21,7 +21,7 @@ object ScraperCache {
         prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     }
 
-    fun getEpisodes(title: String): List<Episode>? = get("episodes_${key(title)}", EPISODE_TTL_MS) {
+    fun getEpisodes(title: String): List<Episode>? = get("episodes_v2_${key(title)}", EPISODE_TTL_MS) {
         json.decodeFromString<List<Episode>>(it)
     }
 
@@ -34,15 +34,15 @@ object ScraperCache {
     }
 
     fun putEpisodes(title: String, episodes: List<Episode>) {
-        put("episodes_${key(title)}", json.encodeToString(episodes))
+        put("episodes_v2_${key(title)}", json.encodeToString(episodes))
     }
 
-    fun getStreams(episodeUrl: String): List<StreamData>? = get("streams_v3_${key(episodeUrl)}", STREAM_TTL_MS) {
+    fun getStreams(episodeUrl: String): List<StreamData>? = get("streams_v4_${key(episodeUrl)}", STREAM_TTL_MS) {
         json.decodeFromString<List<StreamData>>(it)
     }
 
     fun putStreams(episodeUrl: String, streams: List<StreamData>) {
-        put("streams_v3_${key(episodeUrl)}", json.encodeToString(streams))
+        put("streams_v4_${key(episodeUrl)}", json.encodeToString(streams))
     }
 
     private fun <T> get(key: String, ttlMs: Long, decode: (String) -> T): T? {

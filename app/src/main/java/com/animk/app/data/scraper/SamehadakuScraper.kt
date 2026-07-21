@@ -5,7 +5,9 @@ import com.animk.app.data.network.OkHttpClientBuilder
 import com.animk.app.data.remoteconfig.ProviderConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.FormBody
 import okhttp3.Request
+import java.net.URI
 import org.jsoup.Jsoup
 import java.net.URLEncoder
 
@@ -93,81 +95,100 @@ class SamehadakuScraper : BaseScraper {
     override suspend fun getStreams(episodeUrl: String, config: ProviderConfig): List<StreamData> = withContext(Dispatchers.IO) {
         val streams = mutableListOf<StreamData>()
         val addedUrls = mutableSetOf<String>()
-
         try {
-            val request = Request.Builder()
-                .url(episodeUrl)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            val request = Request.Builder().url(episodeUrl)
+                .header("User-Agent", PLAYER_USER_AGENT)
+                .header("Referer", config.domain)
                 .build()
-            val response = client.newCall(request).execute()
-            val html = response.body?.string() ?: return@withContext emptyList()
-            val doc = Jsoup.parse(html)
+            val html = client.newCall(request).execute().use { it.body?.string().orEmpty() }
+            if (html.isBlank()) return@withContext emptyList()
+            val doc = Jsoup.parse(html, episodeUrl)
 
-            val iframeSel = config.selectors.streamIframe.ifEmpty { "iframe[src], iframe[data-src], #embed_holder iframe" }
-            val iframes = doc.select(iframeSel)
-            for (iframe in iframes) {
-                val src = iframe.attr("abs:src").ifEmpty { iframe.attr("abs:data-src") }
-                if (src.isNotBlank() && !src.startsWith("about:") && addedUrls.add(src)) {
-                    val name = when {
-                        src.contains("mega", ignoreCase = true) -> "Mega 1080p"
-                        src.contains("wibu", ignoreCase = true) -> "Wibufile HD"
-                        src.contains("kraken", ignoreCase = true) -> "Krakenfiles HD"
-                        src.contains("pixeldrain", ignoreCase = true) -> "Pixeldrain"
-                        src.contains("streamwish", ignoreCase = true) -> "StreamWish"
-                        else -> "Samehadaku Server ${streams.size + 1}"
-                    }
-                    streams.add(
-                        StreamData(
-                            serverName = name,
-                            streamUrl = src,
-                            isIframe = true,
-                            resolution = StreamResolution.HD_1080p,
-                            priority = ServerPriority.HIGH
-                        )
-                    )
-                }
-            }
-
-            val serverOptions = doc.select("#select-server option, select.mirror option, .server-option option, .server-item a")
-            for (opt in serverOptions) {
-                val value = opt.attr("value").ifEmpty { opt.attr("abs:href") }
-                val label = opt.text().ifEmpty { "Server ${streams.size + 1}" }
-                if (value.startsWith("http") && addedUrls.add(value)) {
-                    streams.add(
-                        StreamData(
-                            serverName = "Samehadaku - $label",
-                            streamUrl = value,
-                            isIframe = true,
-                            resolution = StreamResolution.HD_720p,
-                            priority = ServerPriority.MEDIUM
-                        )
-                    )
-                }
-            }
-
-            if (addedUrls.add(episodeUrl)) {
-                streams.add(
-                    StreamData(
-                        serverName = "Samehadaku Web Player (Full Page)",
-                        streamUrl = episodeUrl,
-                        isIframe = true,
-                        resolution = StreamResolution.HD_720p,
-                        priority = ServerPriority.LOW
-                    )
+            fun addStream(label: String, source: String, quality: StreamResolution, priority: ServerPriority) {
+                if (source.isBlank() || source.startsWith("about:") || !addedUrls.add(source)) return
+                streams += StreamData(
+                    serverName = label,
+                    streamUrl = source,
+                    isIframe = !DirectMediaResolver.isDirectMediaUrl(source),
+                    resolution = quality,
+                    priority = priority,
+                    additionalHeaders = mapOf("Referer" to episodeUrl),
+                    providerName = sourceName
                 )
+            }
+
+            // Samehadaku v2 exposes every server as a WordPress AJAX button.
+            // Resolve those buttons first; regular iframe markup is only a fallback.
+            val optionSelector = config.selectors.streamOption
+            if (optionSelector.isNotBlank()) {
+                for (option in doc.select(optionSelector)) {
+                    val post = option.attr("data-post").trim()
+                    val number = option.attr("data-nume").trim()
+                    if (post.isBlank() || number.isBlank()) continue
+                    val type = option.attr("data-type").trim().ifBlank { "schtml" }
+                    val label = option.text().trim().ifBlank { "Samehadaku mirror" }
+                    requestAjaxPlayer(config.domain, episodeUrl, post, number, type)?.let { source ->
+                        addStream(label, source, resolutionFor(label), ServerPriority.HIGH)
+                    }
+                }
+            }
+
+            val videoSelector = config.selectors.streamVideo.ifBlank { "video source[src], video[src]" }
+            for (video in doc.select(videoSelector)) {
+                val source = video.attr("abs:src").ifBlank { video.attr("src") }
+                addStream("Samehadaku Direct", source, resolutionFor(source), ServerPriority.HIGH)
+            }
+
+            val iframeSelector = config.selectors.streamIframe.ifBlank { "iframe[src], iframe[data-src]" }
+            for (iframe in doc.select(iframeSelector)) {
+                val source = iframe.attr("abs:src").ifBlank { iframe.attr("abs:data-src") }
+                addStream("Samehadaku mirror ${streams.size + 1}", source, resolutionFor(source), ServerPriority.MEDIUM)
             }
         } catch (e: Exception) {
             e.printStackTrace()
-            streams.add(
-                StreamData(
-                    serverName = "Samehadaku Web Player (Fallback)",
-                    streamUrl = episodeUrl,
-                    isIframe = true,
-                    resolution = StreamResolution.HD_720p,
-                    priority = ServerPriority.LOW
-                )
-            )
         }
         streams
+    }
+
+    private fun requestAjaxPlayer(
+        domain: String,
+        episodeUrl: String,
+        post: String,
+        number: String,
+        type: String
+    ): String? = try {
+        val origin = URI(domain).let { "${it.scheme}://${it.host}" }
+        val body = FormBody.Builder()
+            .add("action", "player_ajax")
+            .add("post", post)
+            .add("nume", number)
+            .add("type", type)
+            .build()
+        val request = Request.Builder().url("$origin/wp-admin/admin-ajax.php")
+            .header("User-Agent", PLAYER_USER_AGENT)
+            .header("X-Requested-With", "XMLHttpRequest")
+            .header("Origin", origin)
+            .header("Referer", episodeUrl)
+            .post(body)
+            .build()
+        val response = client.newCall(request).execute().use { it.body?.string().orEmpty() }
+        Jsoup.parse(response, origin)
+            .selectFirst("iframe[src], video[src], video source[src], source[src]")
+            ?.attr("abs:src")
+            ?.takeIf { it.isNotBlank() }
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun resolutionFor(value: String): StreamResolution = when {
+        value.contains("1080", true) -> StreamResolution.HD_1080p
+        value.contains("720", true) -> StreamResolution.HD_720p
+        value.contains("480", true) -> StreamResolution.SD_480p
+        value.contains("360", true) -> StreamResolution.SD_360p
+        else -> StreamResolution.UNKNOWN
+    }
+
+    private companion object {
+        const val PLAYER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36"
     }
 }

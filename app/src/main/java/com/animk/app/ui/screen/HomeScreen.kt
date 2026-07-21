@@ -61,7 +61,7 @@ fun HomeScreen(
                 // Render the first screen as soon as its two essential requests finish.
                 val (ongoing, aniTrending) = coroutineScope {
                     val ongoingRequest = async { scraperRepo.fetchOngoing(limit = 50) }
-                    val trendingRequest = async { aniListService.getTrendingAnime(page = 1, perPage = 10) }
+                    val trendingRequest = async { aniListService.getTrendingAnime(page = 1, perPage = 50) }
                     ongoingRequest.await() to trendingRequest.await()
                 }
                 ongoingAnime = ongoing.filter { it.type == MediaType.ANIME }.distinctBy { it.title }
@@ -166,40 +166,52 @@ fun HomeScreen(
                 }
             }
 
-            // 🔥 Trending Now - From AniList
+            // AniList brings a wider discovery catalog; provider matching happens
+            // when the detail sheet opens, so this screen is never artificially sparse.
             item {
-                if (trendingAnime.take(6).isNotEmpty()) {
+                if (trendingAnime.take(16).isNotEmpty()) {
                     MediaRow(
                         title = "Trending Now",
                         icon = Icons.Filled.Whatshot,
-                        items = trendingAnime.take(6),
+                        items = trendingAnime.take(16),
                         onMediaClick = onMediaClick,
                         collapsedCount = 6
                     )
                 }
             }
 
-            // Popular Anime - From AniList
             item {
-                if (trendingAnime.size > 6) {
+                if (trendingAnime.drop(16).take(18).isNotEmpty()) {
                     MediaRow(
                         title = "Popular Anime",
                         icon = Icons.Filled.EmojiEvents,
-                        items = trendingAnime.drop(6),
+                        items = trendingAnime.drop(16).take(18),
                         onMediaClick = onMediaClick,
                         collapsedCount = 6
                     )
                 }
             }
 
-            // Anime List (extended from scrapers + AniList)
+            item {
+                if (trendingAnime.drop(34).isNotEmpty()) {
+                    MediaRow(
+                        title = "Pilihan Untukmu",
+                        icon = Icons.Filled.Favorite,
+                        items = trendingAnime.drop(34),
+                        onMediaClick = onMediaClick,
+                        collapsedCount = 6
+                    )
+                }
+            }
+
+            // Anime List (extended from all active scrapers + AniList)
             item {
                 val mixedAnime = (ongoingAnime + trendingAnime)
                     .filter { it.type == MediaType.ANIME }
-                    .distinctBy { it.title }
+                    .distinctBy { it.title.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim() }
                 if (mixedAnime.size > 6) {
                     MediaRow(
-                        title = "All Anime",
+                        title = "Jelajahi Semua Anime",
                         icon = Icons.Filled.Movie,
                         items = mixedAnime,
                         onMediaClick = onMediaClick,

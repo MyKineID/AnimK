@@ -1,18 +1,15 @@
 package com.animk.app.ui.screen
 
-import android.content.Intent
 import android.content.pm.ActivityInfo
-import android.net.Uri
 import android.view.ViewGroup
-import android.webkit.CookieManager
-import android.webkit.WebChromeClient
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -35,6 +32,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -44,12 +42,14 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem as ExoMediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
+import com.animk.app.data.model.EpisodeSource
 import com.animk.app.data.model.MediaItem
 import com.animk.app.data.model.StreamData
 import com.animk.app.data.model.StreamResolution
@@ -74,17 +74,19 @@ private fun StreamResolution.displayName(): String = when (this) {
 fun NetflixMediaPlayerScreen(
     media: MediaItem,
     episodeSourceUrl: String,
+    episodeSources: List<EpisodeSource> = emptyList(),
     onBack: () -> Unit
 ) {
     val custom = LocalCustomColors.current
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
 
+    BackHandler(onBack = onBack)
+
     val scraperRepository = remember { ScraperRepository() }
     var availableStreams by remember { mutableStateOf<List<StreamData>>(emptyList()) }
     var activeStream by remember { mutableStateOf<StreamData?>(null) }
     var isFetchingStreams by remember { mutableStateOf(true) }
-    var useWebView by remember { mutableStateOf(false) }
 
     // ExoPlayer state
     var exoPlayer by remember { mutableStateOf<ExoPlayer?>(null) }
@@ -95,7 +97,6 @@ fun NetflixMediaPlayerScreen(
     var isScrubbing by remember { mutableStateOf(false) }
     var scrubPositionMs by remember { mutableFloatStateOf(0f) }
     var playError by remember { mutableStateOf(false) }
-    var webView by remember { mutableStateOf<WebView?>(null) }
     var resumePositionMs by remember(episodeSourceUrl) {
         mutableLongStateOf(WatchHistoryStore.positionFor(episodeSourceUrl))
     }
@@ -117,9 +118,12 @@ fun NetflixMediaPlayerScreen(
         return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
     }
 
-    LaunchedEffect(episodeSourceUrl, media.title) {
+    LaunchedEffect(episodeSourceUrl, episodeSources, media.title) {
         isFetchingStreams = true
-        val streams = scraperRepository.fetchStreamsForEpisode(episodeSourceUrl, media.title)
+        val sources = episodeSources.ifEmpty {
+            listOf(EpisodeSource(providerKey = "", providerName = "", sourceUrl = episodeSourceUrl))
+        }
+        val streams = scraperRepository.fetchStreamsForEpisodes(sources, media.title)
         availableStreams = streams
         activeStream = streams.firstOrNull()
         isFetchingStreams = false
@@ -182,7 +186,6 @@ fun NetflixMediaPlayerScreen(
             hasRestoredPosition = false
             // Provider pages are never rendered in the app. Only direct media URLs
             // are accepted so playback and controls always remain in AnimK's player.
-            useWebView = false
             if (stream.isIframe) {
                 playError = true
             } else {
@@ -216,21 +219,6 @@ fun NetflixMediaPlayerScreen(
         }
     }
 
-    LaunchedEffect(webView, activeStream, useWebView) {
-        while (useWebView && webView != null) {
-            delay(10_000)
-            webView?.evaluateJavascript(
-                "(function(){var v=document.querySelector('video');return v?Math.floor(v.currentTime*1000)+'|'+Math.floor(v.duration*1000):''})()"
-            ) { result ->
-                result.trim('"').split('|').takeIf { it.size == 2 }?.let { values ->
-                    values[0].toLongOrNull()?.let { position ->
-                        saveProgress(position, values[1].toLongOrNull() ?: 0L)
-                    }
-                }
-            }
-        }
-    }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -253,115 +241,19 @@ fun NetflixMediaPlayerScreen(
                     alpha = contentAlpha
                 }
                 .background(Color.Black, RoundedCornerShape((swipeProgress * 24).dp))
-                // Do not intercept touch events from the actual iframe player.
-                .pointerInput(useWebView) {
-                    if (!useWebView) {
-                        detectDragGestures(
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                dragOffsetY += dragAmount.y
-                                if (dragOffsetY > 220f && !isLocked) onBack()
-                            },
-                            onDragEnd = { dragOffsetY = 0f },
-                            onDragCancel = { dragOffsetY = 0f }
-                        )
-                    }
-                }
-                .pointerInput(isLocked, useWebView) {
-                    if (!useWebView) {
-                        detectTapGestures(
-                            onTap = { if (!isLocked) isControlsVisible = !isControlsVisible },
-                            onDoubleTap = { offset ->
-                                if (!isLocked) {
-                                    val screenWidth = size.width
-                                    if (offset.x < screenWidth / 2) {
-                                        showLeftDoubleTapBadge = true
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        exoPlayer?.seekTo((exoPlayer?.currentPosition ?: 0) - 10000)
-                                    } else {
-                                        showRightDoubleTapBadge = true
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        exoPlayer?.seekTo((exoPlayer?.currentPosition ?: 0) + 10000)
-                                    }
-                                }
-                            },
-                            onPress = {
-                                if (!isLocked) {
-                                    tryAwaitRelease()
-                                    if (is2xSpeedActive) is2xSpeedActive = false
-                                }
-                            },
-                            onLongPress = {
-                                if (!isLocked) {
-                                    is2xSpeedActive = true
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                }
-                            }
-                        )
-                    }
-                }
         ) {
-            if (useWebView) {
-                AndroidView(
-                    factory = { ctx ->
-                        WebView(ctx).apply {
-                            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                            settings.apply {
-                                javaScriptEnabled = true
-                                domStorageEnabled = true
-                                mediaPlaybackRequiresUserGesture = false
-                                mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                                userAgentString = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36"
-                            }
-                            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-                            webChromeClient = WebChromeClient()
-                            webView = this
-                            webViewClient = object : WebViewClient() {
-                                override fun onPageFinished(view: WebView, url: String) {
-                                    if (resumePositionMs <= 1_000L) return
-                                    // The Blogger player creates its video element asynchronously.
-                                    // Retry a few times, then let the page keep its default position.
-                                    repeat(4) { attempt ->
-                                        view.postDelayed({
-                                            view.evaluateJavascript(
-                                                "(function(){var v=document.querySelector('video');if(v){v.currentTime=${resumePositionMs / 1000.0};return 'ok'}return ''})()",
-                                                null
-                                            )
-                                        }, attempt * 1_000L)
-                                    }
-                                }
-
-                                override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean {
-                                    val url = request?.url?.toString() ?: return false
-                                    if (url.substringBefore('?').endsWith(".mp4") || url.substringBefore('?').endsWith(".m3u8")) {
-                                        useWebView = false
-                                        exoPlayer?.apply {
-                                            stop(); setMediaItem(ExoMediaItem.fromUri(url)); prepare(); playWhenReady = true
-                                        }
-                                        return true
-                                    }
-                                    return false
-                                }
-                            }
-                            activeStream?.let { loadUrl(it.streamUrl, it.additionalHeaders) }
-                        }
-                    },
-                    update = { view ->
-                        activeStream?.takeIf { it.streamUrl != view.url }?.let { stream ->
-                            view.loadUrl(stream.streamUrl, stream.additionalHeaders)
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
                 AndroidView(
                     factory = { ctx ->
                         PlayerView(ctx).apply {
-                            val dataSourceFactory = DefaultHttpDataSource.Factory()
-                                // Must match the UA used while resolving Blogger's signed URL.
-                                .setUserAgent(BLOGGER_PLAYER_USER_AGENT)
-                                .setDefaultRequestProperties(activeStream?.additionalHeaders ?: emptyMap())
-                                .setAllowCrossProtocolRedirects(true)
+                            // A fresh HTTP source is created for each selected stream so
+                            // its signed URL gets the correct Referer without rebuilding UI.
+                            val dataSourceFactory = DataSource.Factory {
+                                DefaultHttpDataSource.Factory()
+                                    .setUserAgent(BLOGGER_PLAYER_USER_AGENT)
+                                    .setDefaultRequestProperties(activeStream?.additionalHeaders ?: emptyMap())
+                                    .setAllowCrossProtocolRedirects(true)
+                                    .createDataSource()
+                            }
                             val player = ExoPlayer.Builder(ctx)
                                 .setMediaSourceFactory(
                                     DefaultMediaSourceFactory(ctx).setDataSourceFactory(dataSourceFactory)
@@ -406,6 +298,47 @@ fun NetflixMediaPlayerScreen(
                     update = {},
                     modifier = Modifier.fillMaxSize()
                 )
+
+            // Native gesture layer: no Material ripple and never changes play state on a single tap.
+            if (!isLocked) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            detectDragGestures(
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    dragOffsetY += dragAmount.y
+                                    if (dragOffsetY > 220f) onBack()
+                                },
+                                onDragEnd = { dragOffsetY = 0f },
+                                onDragCancel = { dragOffsetY = 0f }
+                            )
+                        }
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onTap = { isControlsVisible = !isControlsVisible },
+                                onDoubleTap = { offset ->
+                                    if (offset.x < size.width / 2) {
+                                        showLeftDoubleTapBadge = true
+                                        exoPlayer?.seekTo((exoPlayer?.currentPosition ?: 0L) - 10_000L)
+                                    } else {
+                                        showRightDoubleTapBadge = true
+                                        exoPlayer?.seekTo((exoPlayer?.currentPosition ?: 0L) + 10_000L)
+                                    }
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                },
+                                onPress = {
+                                    tryAwaitRelease()
+                                    if (is2xSpeedActive) is2xSpeedActive = false
+                                },
+                                onLongPress = {
+                                    is2xSpeedActive = true
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                }
+                            )
+                        }
+                )
             }
 
             // Loading indicator
@@ -433,7 +366,7 @@ fun NetflixMediaPlayerScreen(
                                 exoPlayer?.apply { stop(); prepare(); playWhenReady = true }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = custom.primary)
-                        ) { Text("Retry Custom Player") }
+                        ) { Text("Coba lagi") }
                     }
                 }
             }
@@ -498,37 +431,57 @@ fun NetflixMediaPlayerScreen(
                     Box(modifier = Modifier.fillMaxWidth().height(140.dp).align(Alignment.BottomCenter)
                         .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f)))))
 
-                    Row(modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White) }
-                            Spacer(Modifier.width(8.dp))
-                            Text(text = media.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Row(
+                        modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Kembali", tint = Color.White)
                         }
-                        IconButton(onClick = { isLocked = true }) { Icon(Icons.Filled.LockOpen, contentDescription = "Lock", tint = Color.White.copy(alpha = 0.85f)) }
+                        Text(
+                            text = media.title,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                        )
+                        IconButton(onClick = { isLocked = true; isControlsVisible = true }) {
+                            Icon(Icons.Filled.LockOpen, contentDescription = "Kunci kontrol", tint = Color.White.copy(alpha = 0.9f))
+                        }
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.Filled.FullscreenExit, contentDescription = "Keluar layar penuh", tint = Color.White)
+                        }
                     }
 
-                    if (!useWebView) {
-                        Box(modifier = Modifier.align(Alignment.Center).fillMaxSize().clickable {
-                            exoPlayer?.let { if (it.isPlaying) it.pause() else it.play() }
-                        })
-                        Row(
-                            modifier = Modifier.align(Alignment.Center),
-                            horizontalArrangement = Arrangement.spacedBy(28.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                    Row(
+                        modifier = Modifier.align(Alignment.Center),
+                        horizontalArrangement = Arrangement.spacedBy(18.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = { exoPlayer?.seekTo((exoPlayer?.currentPosition ?: 0L) - 10_000L) },
+                            modifier = Modifier.size(44.dp).background(Color.Black.copy(alpha = 0.48f), CircleShape)
                         ) {
-                            IconButton(onClick = { exoPlayer?.seekTo((exoPlayer?.currentPosition ?: 0L) - 10_000L) }, modifier = Modifier.size(52.dp)) {
-                                Icon(Icons.Filled.Replay10, contentDescription = "Back 10 seconds", tint = Color.White, modifier = Modifier.size(38.dp))
-                            }
-                            IconButton(
-                                onClick = { exoPlayer?.let { if (it.isPlaying) it.pause() else it.play() } },
-                                modifier = Modifier.size(74.dp).background(Color.White.copy(alpha = 0.9f), CircleShape)
-                            ) {
-                                Icon(if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, contentDescription = if (isPlaying) "Pause" else "Play", tint = Color.Black, modifier = Modifier.size(52.dp))
-                            }
-                            IconButton(onClick = { exoPlayer?.seekTo((exoPlayer?.currentPosition ?: 0L) + 10_000L) }, modifier = Modifier.size(52.dp)) {
-                                Icon(Icons.Filled.Forward10, contentDescription = "Forward 10 seconds", tint = Color.White, modifier = Modifier.size(38.dp))
-                            }
+                            Icon(Icons.Filled.Replay10, contentDescription = "Mundur 10 detik", tint = Color.White, modifier = Modifier.size(25.dp))
+                        }
+                        IconButton(
+                            onClick = { exoPlayer?.let { if (it.isPlaying) it.pause() else it.play() } },
+                            modifier = Modifier.size(54.dp).background(Color.Black.copy(alpha = 0.58f), CircleShape)
+                        ) {
+                            Icon(
+                                if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                contentDescription = if (isPlaying) "Jeda" else "Putar",
+                                tint = Color.White,
+                                modifier = Modifier.size(30.dp)
+                            )
+                        }
+                        IconButton(
+                            onClick = { exoPlayer?.seekTo((exoPlayer?.currentPosition ?: 0L) + 10_000L) },
+                            modifier = Modifier.size(44.dp).background(Color.Black.copy(alpha = 0.48f), CircleShape)
+                        ) {
+                            Icon(Icons.Filled.Forward10, contentDescription = "Maju 10 detik", tint = Color.White, modifier = Modifier.size(25.dp))
                         }
                     }
 
@@ -560,27 +513,37 @@ fun NetflixMediaPlayerScreen(
                         }
                         Spacer(Modifier.height(2.dp))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Row {
-                                TextButton(onClick = { showServerSheet = true }) {
-                                    Icon(Icons.Filled.Dns, contentDescription = null, tint = custom.primary)
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("${activeStream?.serverName ?: "Select Server"} • ${activeStream?.resolution?.displayName() ?: "Auto"}", color = Color.White, fontWeight = FontWeight.Bold)
-                                    Spacer(Modifier.width(4.dp))
-                                    Surface(color = custom.primary.copy(alpha = 0.2f), shape = RoundedCornerShape(4.dp)) {
-                                        Text("${availableStreams.size}", color = custom.primary, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                            Surface(
+                                color = Color.Black.copy(alpha = 0.42f),
+                                shape = RoundedCornerShape(18.dp),
+                                modifier = Modifier.weight(1f).heightIn(min = 36.dp).clickable { showServerSheet = true }
+                            ) {
+                                Row(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Filled.Dns, contentDescription = "Pilih server", tint = custom.primary, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        text = activeStream?.let { "${it.providerName.ifBlank { "Server" }} · ${it.resolution.displayName()}" } ?: "Pilih server",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Surface(color = custom.primary.copy(alpha = 0.22f), shape = CircleShape) {
+                                        Text("${availableStreams.size}", color = custom.primary, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                                     }
                                 }
-                                Spacer(Modifier.width(8.dp))
-                                TextButton(onClick = { showSpeedSheet = true }) {
-                                    Icon(Icons.Filled.Speed, contentDescription = null, tint = custom.primary.copy(alpha = 0.8f))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text(if (playbackSpeed == 1.0f) "1.0x" else "${playbackSpeed}x", color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Bold)
-                                }
                             }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Filled.PlayCircle, contentDescription = null, tint = custom.primary.copy(alpha = 0.8f))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Custom Player", color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.width(8.dp))
+                            Surface(
+                                color = Color.Black.copy(alpha = 0.42f),
+                                shape = CircleShape,
+                                modifier = Modifier.size(38.dp).clickable { showSpeedSheet = true }
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(if (playbackSpeed == 1.0f) "1x" else "${playbackSpeed}x", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
@@ -609,30 +572,66 @@ fun NetflixMediaPlayerScreen(
         }
     }
 
-    // Server Sheet
+    // Compact native server picker; it never opens a provider webpage.
     if (showServerSheet) {
-        ModalBottomSheet(onDismissRequest = { showServerSheet = false }, containerColor = custom.surface) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Dns, contentDescription = null, tint = custom.primary)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Select Stream Server (${availableStreams.size})", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = custom.textPrimary)
+        AlertDialog(
+            onDismissRequest = { showServerSheet = false },
+            containerColor = custom.surface,
+            titleContentColor = custom.textPrimary,
+            textContentColor = custom.textSecondary,
+            title = {
+                Column {
+                    Text("Server & kualitas", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("${availableStreams.size} stream direct tersedia", fontSize = 12.sp, color = custom.textMuted, fontWeight = FontWeight.Normal)
                 }
-                Text("Pilih mirror dan resolusi yang tersedia untuk custom player.", fontSize = 12.sp, color = custom.textMuted, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
-                availableStreams.forEach { stream ->
-                    Surface(color = if (activeStream == stream) custom.primary.copy(alpha = 0.15f) else custom.cardSurface,
-                        shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { activeStream = stream; showServerSheet = false }) {
-                        Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Column {
-                                Text(text = "${stream.serverName} • ${stream.resolution.displayName()}", color = if (activeStream == stream) custom.primary else custom.textPrimary, fontSize = 14.sp)
-                                Text(text = "Direct Media3 stream", color = custom.textMuted, fontSize = 11.sp, maxLines = 1)
+            },
+            text = {
+                LazyColumn(modifier = Modifier.heightIn(max = 310.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(availableStreams, key = { "${it.providerName}:${it.serverName}:${it.streamUrl}" }) { stream ->
+                        val selected = activeStream == stream
+                        Surface(
+                            color = if (selected) custom.primary.copy(alpha = 0.14f) else custom.cardSurface,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                activeStream = stream
+                                showServerSheet = false
                             }
-                            if (activeStream == stream) Icon(Icons.Filled.Check, contentDescription = null, tint = custom.primary)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(color = if (selected) custom.primary else custom.background, shape = RoundedCornerShape(6.dp)) {
+                                    Text(
+                                        stream.resolution.displayName(),
+                                        color = if (selected) custom.onPrimary else custom.textSecondary,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp)
+                                    )
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        stream.providerName.ifBlank { "Direct stream" },
+                                        color = if (selected) custom.primary else custom.textPrimary,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(stream.serverName, color = custom.textMuted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                if (selected) Icon(Icons.Filled.CheckCircle, contentDescription = "Aktif", tint = custom.primary, modifier = Modifier.size(20.dp))
+                            }
                         }
                     }
                 }
-                Spacer(Modifier.height(32.dp))
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showServerSheet = false }) { Text("Tutup", color = custom.primary) }
             }
-        }
+        )
     }
 }

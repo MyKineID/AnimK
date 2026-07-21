@@ -1,5 +1,6 @@
 package com.animk.app.data.scraper
 
+import android.util.Base64
 import com.animk.app.data.model.*
 import com.animk.app.data.network.OkHttpClientBuilder
 import com.animk.app.data.remoteconfig.ProviderConfig
@@ -11,7 +12,7 @@ import java.net.URLEncoder
 
 class DonghuaScraper : BaseScraper {
     override val sourceName: String = "Anichin"
-    override val sourceKey: String = "donghua"
+    override val sourceKey: String = "anichin"
     private val client = OkHttpClientBuilder.buildUnsafeClient()
 
     override suspend fun search(query: String, config: ProviderConfig): List<MediaItem> = withContext(Dispatchers.IO) {
@@ -68,14 +69,19 @@ class DonghuaScraper : BaseScraper {
             var count = 1f
             for (el in epElements) {
                 val epUrl = el.attr("abs:href")
+                val detectedNumber = el.attr("data-number").toFloatOrNull()
+                    ?: Regex("(?:episode|ep)\\s*(\\d+(?:\\.\\d+)?)", RegexOption.IGNORE_CASE)
+                        .find(el.text())?.groupValues?.getOrNull(1)?.toFloatOrNull()
+                val number = detectedNumber ?: count
                 val epTitle = el.select(".epl-num, .epl-title").text().ifEmpty { el.text() }
                 if (epUrl.isNotBlank() && !episodes.any { it.sourceUrl == epUrl }) {
                     episodes.add(
                         Episode(
                             id = epUrl,
                             sourceUrl = epUrl,
-                            episodeNumber = count,
-                            title = if (epTitle.isNotBlank()) epTitle else "Episode $count"
+                            episodeNumber = number,
+                            title = epTitle.takeIf { it.contains("episode", ignoreCase = true) }
+                                ?: "Episode ${if (number % 1f == 0f) number.toInt() else number}"
                         )
                     )
                     count += 1f
@@ -93,74 +99,80 @@ class DonghuaScraper : BaseScraper {
     override suspend fun getStreams(episodeUrl: String, config: ProviderConfig): List<StreamData> = withContext(Dispatchers.IO) {
         val streams = mutableListOf<StreamData>()
         val addedUrls = mutableSetOf<String>()
-
         try {
-            val request = Request.Builder()
-                .url(episodeUrl)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            val request = Request.Builder().url(episodeUrl)
+                .header("User-Agent", PLAYER_USER_AGENT)
+                .header("Referer", config.domain)
                 .build()
-            val response = client.newCall(request).execute()
-            val html = response.body?.string() ?: return@withContext emptyList()
-            val doc = Jsoup.parse(html)
+            val html = client.newCall(request).execute().use { it.body?.string().orEmpty() }
+            if (html.isBlank()) return@withContext emptyList()
+            val doc = Jsoup.parse(html, episodeUrl)
 
-            val mirrorIframes = doc.select(
-                config.selectors.streamIframe.ifEmpty { ".mirror iframe[src], #embed_holder iframe[src], iframe[data-src]" }
-            )
-            for (iframe in mirrorIframes) {
-                val src = iframe.attr("abs:src").ifEmpty { iframe.attr("abs:data-src") }
-                if (src.isNotBlank() && !src.startsWith("about:") && addedUrls.add(src)) {
-                    streams.add(
-                        StreamData(
-                            serverName = "Anichin Mirror ${streams.size + 1}",
-                            streamUrl = src,
-                            isIframe = true,
-                            resolution = StreamResolution.HD_720p,
-                            priority = ServerPriority.HIGH
-                        )
-                    )
+            fun addMirror(label: String, source: String, priority: ServerPriority) {
+                if (source.isBlank() || source.startsWith("about:") || !addedUrls.add(source)) return
+                streams += StreamData(
+                    serverName = label,
+                    streamUrl = source,
+                    isIframe = !DirectMediaResolver.isDirectMediaUrl(source),
+                    resolution = resolutionFor(label),
+                    priority = priority,
+                    additionalHeaders = mapOf("Referer" to episodeUrl),
+                    providerName = sourceName
+                )
+            }
+
+            // Anichin server buttons carry base64 HTML in data-hash. Decode the
+            // embed URL directly; no provider page is opened in the player.
+            val optionSelector = config.selectors.streamOption
+            if (optionSelector.isNotBlank()) {
+                for (option in doc.select(optionSelector)) {
+                    val encoded = option.attr("data-hash")
+                    val source = decodeMirrorHash(encoded, episodeUrl)
+                    addMirror(option.text().trim().ifBlank { "Anichin mirror" }, source.orEmpty(), ServerPriority.HIGH)
                 }
             }
 
-            val mirrorOptions = doc.select("select.mirror option, .mirror option")
-            for (opt in mirrorOptions) {
-                val value = opt.attr("value")
-                val name = opt.text().ifEmpty { "Anichin Server ${streams.size + 1}" }
-                if (value.startsWith("http") && addedUrls.add(value)) {
-                    streams.add(
-                        StreamData(
-                            serverName = name,
-                            streamUrl = value,
-                            isIframe = true,
-                            resolution = StreamResolution.HD_720p,
-                            priority = ServerPriority.MEDIUM
-                        )
-                    )
-                }
+            val videoSelector = config.selectors.streamVideo.ifBlank { "video source[src], video[src]" }
+            for (video in doc.select(videoSelector)) {
+                addMirror("Anichin Direct", video.attr("abs:src").ifBlank { video.attr("src") }, ServerPriority.HIGH)
             }
 
-            if (addedUrls.add(episodeUrl)) {
-                streams.add(
-                    StreamData(
-                        serverName = "Anichin Web Player (Full Page)",
-                        streamUrl = episodeUrl,
-                        isIframe = true,
-                        resolution = StreamResolution.HD_720p,
-                        priority = ServerPriority.LOW
-                    )
+            val iframeSelector = config.selectors.streamIframe.ifBlank { "iframe[src], iframe[data-src]" }
+            for (iframe in doc.select(iframeSelector)) {
+                addMirror(
+                    "Anichin mirror ${streams.size + 1}",
+                    iframe.attr("abs:src").ifBlank { iframe.attr("abs:data-src") },
+                    ServerPriority.MEDIUM
                 )
             }
         } catch (e: Exception) {
             e.printStackTrace()
-            streams.add(
-                StreamData(
-                    serverName = "Anichin Web Player (Fallback)",
-                    streamUrl = episodeUrl,
-                    isIframe = true,
-                    resolution = StreamResolution.HD_720p,
-                    priority = ServerPriority.LOW
-                )
-            )
         }
         streams
+    }
+
+    private fun decodeMirrorHash(value: String, baseUrl: String): String? {
+        if (value.isBlank()) return null
+        return try {
+            val html = String(Base64.decode(value, Base64.DEFAULT), Charsets.UTF_8)
+            Jsoup.parse(html, baseUrl)
+                .selectFirst("iframe[src], video[src], video source[src], source[src]")
+                ?.attr("abs:src")
+                ?.takeIf { it.isNotBlank() }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun resolutionFor(value: String): StreamResolution = when {
+        value.contains("1080", true) -> StreamResolution.HD_1080p
+        value.contains("720", true) -> StreamResolution.HD_720p
+        value.contains("480", true) -> StreamResolution.SD_480p
+        value.contains("360", true) -> StreamResolution.SD_360p
+        else -> StreamResolution.UNKNOWN
+    }
+
+    private companion object {
+        const val PLAYER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36"
     }
 }

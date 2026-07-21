@@ -64,6 +64,7 @@ dependencies {
     // Network & Scraping
     implementation("org.jsoup:jsoup:1.17.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")
 
     // Supabase & Ktor & Serialization
     implementation("io.github.jan-tennert.supabase:postgrest-kt:2.1.3")

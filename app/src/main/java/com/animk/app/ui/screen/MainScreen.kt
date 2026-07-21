@@ -15,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.animk.app.data.model.Episode
+import com.animk.app.data.model.EpisodeSource
 import com.animk.app.data.model.MediaItem
 import com.animk.app.ui.component.AuthSheet
 import com.animk.app.ui.component.MediaDetailSheet
@@ -47,6 +48,7 @@ fun MainScreen(
     // Now we track both the media AND the episode source URL for the player
     var playerMedia by remember { mutableStateOf<MediaItem?>(null) }
     var playerEpisodeUrl by remember { mutableStateOf("") }
+    var playerEpisodeSources by remember { mutableStateOf<List<EpisodeSource>>(emptyList()) }
     var showAuthSheet by remember { mutableStateOf(false) }
 
     val myListState = remember { mutableStateListOf<MediaItem>() }
@@ -64,11 +66,13 @@ fun MainScreen(
         NetflixMediaPlayerScreen(
             media = playerMedia!!,
             episodeSourceUrl = playerEpisodeUrl,
+            episodeSources = playerEpisodeSources,
             onBack = {
                 // Back from player → return to detail sheet (reopen it)
                 val backMedia = playerMedia
                 playerMedia = null
                 playerEpisodeUrl = ""
+                playerEpisodeSources = emptyList()
                 selectedMediaForDetail = backMedia
             }
         )
@@ -108,13 +112,14 @@ fun MainScreen(
                 0 -> HomeScreen(
                     onMediaClick = { selectedMediaForDetail = it },
                     onPlayClick = {
-                        // Direct play from home → uses first episode, player will fetch
-                        playerMedia = it
-                        playerEpisodeUrl = it.id // fallback: use media URL as episode URL
+                        // AniList IDs are metadata IDs, not episode URLs. Open detail first
+                        // so all matching provider episodes can be merged correctly.
+                        selectedMediaForDetail = it
                     },
                     onResumeWatching = { entry ->
                         playerMedia = entry.media
                         playerEpisodeUrl = entry.episodeSourceUrl
+                        playerEpisodeSources = listOf(EpisodeSource("", "", entry.episodeSourceUrl))
                     },
                     onToggleMyList = { toggleMyList(it) },
                     myList = myListState,
@@ -146,6 +151,9 @@ fun MainScreen(
                     onPlayEpisode = { mediaItem, episode ->
                         playerMedia = mediaItem
                         playerEpisodeUrl = episode.sourceUrl
+                        playerEpisodeSources = episode.sources.ifEmpty {
+                            listOf(EpisodeSource("", "", episode.sourceUrl))
+                        }
                         selectedMediaForDetail = null
                     },
                     onToggleMyList = { toggleMyList(it) },

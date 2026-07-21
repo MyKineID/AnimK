@@ -19,6 +19,8 @@ data class ProviderConfig(
     val active: Boolean = false,
     val priority: Int = Int.MAX_VALUE,
     val domain: String = "",
+    /** Alternate hosts used after a provider redirects to a current mirror domain. */
+    val aliases: List<String> = emptyList(),
     @SerialName("search_path") val searchPath: String = "",
     val selectors: ProviderSelectors = ProviderSelectors()
 )
@@ -40,5 +42,7 @@ data class ProviderSelectors(
     /** Selector for iframe stream elements */
     @SerialName("stream_iframe") val streamIframe: String = "",
     /** Selector for video source elements */
-    @SerialName("stream_video") val streamVideo: String = ""
+    @SerialName("stream_video") val streamVideo: String = "",
+    /** Provider-owned mirror controls (for example AJAX server buttons). */
+    @SerialName("stream_option") val streamOption: String = ""
 )

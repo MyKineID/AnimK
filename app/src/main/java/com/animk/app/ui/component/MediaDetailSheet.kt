@@ -74,7 +74,10 @@ fun MediaDetailSheet(
         try {
             val episodes = scraperRepository.fetchEpisodesForTitle(media.title)
             scrapedEpisodes = episodes
-            episodeSource = if (episodes.isNotEmpty()) "Found ${episodes.size} episodes" else "No episodes found"
+            val providerCount = episodes.flatMap { it.sources }.map { it.providerKey }.filter { it.isNotBlank() }.distinct().size
+            episodeSource = if (episodes.isNotEmpty()) {
+                "${episodes.size} episode${if (providerCount > 0) " · $providerCount provider" else ""}"
+            } else "No episodes found"
         } catch (e: Exception) {
             episodeSource = "Failed to load episodes"
             e.printStackTrace()
@@ -360,6 +363,12 @@ fun MediaDetailSheet(
                         Column(modifier = Modifier.weight(1f)) {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(ep.title, fontWeight = FontWeight.SemiBold, color = custom.textPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                if (ep.sources.size > 1) {
+                                    Surface(color = custom.primary.copy(alpha = 0.14f), shape = RoundedCornerShape(4.dp)) {
+                                        Text("${ep.sources.size} sumber", color = custom.primary, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp))
+                                    }
+                                    Spacer(Modifier.width(6.dp))
+                                }
                                 Text(ep.duration, color = custom.textMuted, fontSize = 12.sp)
                             }
                             Spacer(modifier = Modifier.height(4.dp))

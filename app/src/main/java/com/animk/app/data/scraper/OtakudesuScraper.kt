@@ -58,11 +58,48 @@ class OtakudesuScraper : BaseScraper {
             }
         } catch (_: Exception) {}
 
-        // 2. If query is empty/blank, return only ongoing results
-        if (query.isBlank()) return@withContext results
+        // 2. Full catalog search. The endpoint and selectors come from Director,
+        // so older completed anime are not limited to the ongoing page.
+        if (query.isNotBlank() && config.searchPath.isNotBlank()) {
+            try {
+                val url = domain + config.searchPath + URLEncoder.encode(query, "UTF-8")
+                val request = Request.Builder().url(url)
+                    .header("User-Agent", PLAYER_USER_AGENT)
+                    .build()
+                val searchHtml = client.newCall(request).execute().body?.string().orEmpty()
+                val searchDoc = Jsoup.parse(searchHtml, domain)
+                for (element in searchDoc.select(config.selectors.list)) {
+                    val link = element.selectFirst(config.selectors.link)?.attr("abs:href").orEmpty()
+                    // Otakudesu search also returns individual episode pages; only
+                    // catalog/detail pages are valid media entries here.
+                    if (!link.contains("/anime/", ignoreCase = true)) continue
+                    val title = element.selectFirst(config.selectors.title)?.text()?.trim().orEmpty()
+                    if (title.isBlank()) continue
+                    val image = element.selectFirst(config.selectors.image)
+                    val poster = image?.attr("abs:src").orEmpty()
+                        .ifBlank { image?.attr("abs:data-src").orEmpty() }
+                    results.add(
+                        MediaItem(
+                            id = link,
+                            title = title,
+                            type = MediaType.ANIME,
+                            posterUrl = poster.ifBlank { "https://picsum.photos/300/450" },
+                            backdropUrl = poster.ifBlank { null },
+                            description = "Otakudesu stream source",
+                            genres = listOf("Anime")
+                        )
+                    )
+                }
+            } catch (_: Exception) {
+                // Direct-slug fallback below still covers providers that reject search.
+            }
+        }
 
-        // 3. Try direct slug construction: domain/anime/{slug}{suffix}/
-        if (results.isEmpty()) {
+        // 3. If query is empty/blank, return only ongoing results.
+        if (query.isBlank()) return@withContext results.distinctBy { it.id }
+
+        // 4. Try direct slug construction: domain/anime/{slug}{suffix}/
+        if (results.none { it.title.contains(query, ignoreCase = true) }) {
             val baseSlug = query.lowercase(Locale.ROOT)
                 .replace(Regex("[^a-z0-9\\s-]"), "")
                 .replace(Regex("\\s+"), "-")
@@ -137,30 +174,43 @@ class OtakudesuScraper : BaseScraper {
             val html = client.newCall(req).execute().body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            fun addDirectStream(sourceUrl: String, serverName: String, resolution: StreamResolution) {
+            suspend fun addDirectStream(sourceUrl: String, serverName: String, resolution: StreamResolution) {
                 if (!sourceUrls.add(sourceUrl)) return
-                val resolvedUrl = resolvePlayableUrl(sourceUrl)
-                if (isDirectVideoUrl(resolvedUrl) && directUrls.add(resolvedUrl)) {
+                val resolved = if (sourceUrl.contains("desustream", ignoreCase = true)) {
+                    ResolvedDirectMedia(resolvePlayableUrl(sourceUrl))
+                } else {
+                    DirectMediaResolver.resolve(sourceUrl, mapOf("Referer" to episodeUrl))
+                } ?: return
+                if (isDirectVideoUrl(resolved.url) && directUrls.add(resolved.url)) {
                     streams.add(StreamData(
                         serverName = serverName,
-                        streamUrl = resolvedUrl,
+                        streamUrl = resolved.url,
                         isIframe = false,
                         resolution = resolution,
-                        priority = ServerPriority.HIGH
+                        priority = ServerPriority.HIGH,
+                        additionalHeaders = resolved.additionalHeaders,
+                        providerName = sourceName
                     ))
                 }
             }
 
-            // The mirror menu is loaded through WordPress AJAX. Resolve its DesuStream
-            // entries (480p/720p) into direct media, rather than displaying iframe pages.
-            val mirrors = parseMirrorOptions(doc)
-                .filter { it.server.contains("ondesu", ignoreCase = true) }
-                .sortedByDescending { qualityHeight(it.quality) }
+            // Resolve every supported mirror from Otakudesu's AJAX menu. Mega is
+            // encrypted client-side and cannot be handed to Media3 as a raw URL.
+            val mirrors = parseMirrorOptions(doc, config.selectors.streamOption)
+                .filterNot { it.server.contains("mega", ignoreCase = true) }
+                .sortedWith(
+                    compareByDescending<MirrorOption> { qualityHeight(it.quality) }
+                        .thenBy { mirrorRank(it.server) }
+                )
             val nonce = if (mirrors.isNotEmpty()) fetchMirrorNonce(config.domain, episodeUrl) else null
             if (nonce != null) {
                 for (mirror in mirrors) {
                     fetchMirrorIframe(config.domain, episodeUrl, nonce, mirror)?.let { sourceUrl ->
-                        addDirectStream(sourceUrl, "DesuStream ${mirror.server.trim()} ${mirror.quality}", resolutionFor(mirror.quality))
+                        addDirectStream(
+                            sourceUrl = sourceUrl,
+                            serverName = mirrorServerName(mirror),
+                            resolution = resolutionFor(mirror.quality)
+                        )
                     }
                 }
             }
@@ -172,7 +222,7 @@ class OtakudesuScraper : BaseScraper {
                 if (src.isNotBlank() && !src.startsWith("about:")) {
                     addDirectStream(
                         sourceUrl = src,
-                        serverName = if (src.contains("desustream", true)) "DesuStream Default" else "Server ${streams.size + 1}",
+                        serverName = if (src.contains("desustream", true)) "DesuStream · Auto" else "Mirror ${streams.size + 1}",
                         resolution = resolutionFor(src)
                     )
                 }
@@ -188,7 +238,8 @@ class OtakudesuScraper : BaseScraper {
         val server: String
     )
 
-    private fun parseMirrorOptions(doc: Document): List<MirrorOption> = doc.select("[data-content]").mapNotNull { element ->
+    private fun parseMirrorOptions(doc: Document, selector: String): List<MirrorOption> =
+        doc.select(selector.ifBlank { "[data-content]" }).mapNotNull { element ->
         try {
             val decoded = String(Base64.decode(element.attr("data-content"), Base64.DEFAULT), Charsets.UTF_8)
             val data = json.parseToJsonElement(decoded) as? JsonObject ?: return@mapNotNull null
@@ -245,6 +296,23 @@ class OtakudesuScraper : BaseScraper {
         }
     } catch (_: Exception) {
         null
+    }
+
+    private fun mirrorRank(server: String): Int = when {
+        server.contains("ondesu", ignoreCase = true) -> 0
+        server.contains("filedon", ignoreCase = true) -> 1
+        server.contains("vidhide", ignoreCase = true) -> 2
+        else -> 3
+    }
+
+    private fun mirrorServerName(mirror: MirrorOption): String {
+        val host = when {
+            mirror.server.contains("filedon", ignoreCase = true) -> "FileDon"
+            mirror.server.contains("vidhide", ignoreCase = true) -> "VidHide"
+            mirror.server.contains("ondesu", ignoreCase = true) -> "DesuStream"
+            else -> mirror.server.trim().replaceFirstChar { it.uppercase() }
+        }
+        return "$host · ${mirror.quality}"
     }
 
     private fun resolutionFor(value: String): StreamResolution = when {
