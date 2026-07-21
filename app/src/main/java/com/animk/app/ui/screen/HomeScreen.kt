@@ -9,6 +9,8 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.Whatshot
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -20,6 +22,8 @@ import com.animk.app.data.model.MediaItem
 import com.animk.app.data.model.MediaType
 import com.animk.app.data.network.AniListApiService
 import com.animk.app.data.repository.ScraperRepository
+import com.animk.app.data.scraper.SourceRegistry
+import com.animk.app.data.remoteconfig.DirectorConfigProvider
 import com.animk.app.ui.component.HeroBanner
 import com.animk.app.ui.component.MediaRow
 import com.animk.app.ui.theme.LocalCustomColors
@@ -39,8 +43,8 @@ fun HomeScreen(
     val aniListService = remember { AniListApiService() }
     val scraperRepo = remember { ScraperRepository() }
 
+    var ongoingAnime by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     var trendingAnime by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
-    var popularAnime by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     var donghuaList by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     var drakorList by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
@@ -48,10 +52,23 @@ fun HomeScreen(
     LaunchedEffect(Unit) {
         scope.launch {
             try {
-                trendingAnime = aniListService.getTrendingAnime(page = 1, perPage = 6)
-                popularAnime = aniListService.searchAnime("Naruto")
-                donghuaList = scraperRepo.searchByType("BTTH", MediaType.DONGHUA)
-                drakorList = scraperRepo.searchByType("Love", MediaType.DRAKOR)
+                // Load ongoing anime from scrapers (otakudesu primary source)
+                val ongoing = scraperRepo.fetchOngoing(limit = 50)
+                ongoingAnime = ongoing.filter {
+                    it.type == MediaType.ANIME
+                }.distinctBy { it.title }
+
+                // Load AniList trending for hero banner + variety
+                val aniTrending = aniListService.getTrendingAnime(page = 1, perPage = 10)
+                // Keep only AniList anime that also exist in scrapers OR just show them anyway
+                // (some popular anime might not be in ongoing but have episodes in scrapers)
+                trendingAnime = aniTrending
+
+                // Load donghua from all scrapers
+                donghuaList = scraperRepo.searchByType("", MediaType.DONGHUA).take(20)
+
+                // Load drakor from all scrapers
+                drakorList = scraperRepo.searchByType("", MediaType.DRAKOR).take(20)
             } catch (e: Exception) {
                 e.printStackTrace()
             } finally {
@@ -69,7 +86,7 @@ fun HomeScreen(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 80.dp)
         ) {
-            // Clean Brand Header Logo
+            // Brand Header
             item {
                 Row(
                     modifier = Modifier
@@ -94,7 +111,7 @@ fun HomeScreen(
                 }
             }
 
-            // Hero Banner Carousel
+            // Hero Banner Carousel (from AniList trending)
             item {
                 if (isLoading) {
                     Box(
@@ -116,53 +133,89 @@ fun HomeScreen(
                 }
             }
 
-            // Trending Anime Section
+            // 🔥 Ongoing Anime - From Otakudesu (primary scraper)
             item {
-                if (trendingAnime.isNotEmpty()) {
+                if (ongoingAnime.isNotEmpty()) {
+                    MediaRow(
+                        title = "Ongoing Anime",
+                        icon = Icons.Filled.PlayCircle,
+                        items = ongoingAnime,
+                        onMediaClick = onMediaClick,
+                        collapsedCount = 6
+                    )
+                }
+            }
+
+            // 🔥 Trending Now - From AniList
+            item {
+                if (trendingAnime.take(6).isNotEmpty()) {
                     MediaRow(
                         title = "Trending Now",
                         icon = Icons.Filled.Whatshot,
-                        items = trendingAnime,
-                        onMediaClick = onMediaClick
+                        items = trendingAnime.take(6),
+                        onMediaClick = onMediaClick,
+                        collapsedCount = 6
                     )
                 }
             }
 
-            // Popular Anime Section
+            // Popular Anime - From AniList
             item {
-                if (popularAnime.isNotEmpty()) {
+                if (trendingAnime.size > 6) {
                     MediaRow(
                         title = "Popular Anime",
                         icon = Icons.Filled.EmojiEvents,
-                        items = popularAnime,
-                        onMediaClick = onMediaClick
+                        items = trendingAnime.drop(6),
+                        onMediaClick = onMediaClick,
+                        collapsedCount = 6
                     )
                 }
             }
 
-            // 3D Donghua Section (from remote config)
+            // Anime List (extended from scrapers + AniList)
+            item {
+                val mixedAnime = (ongoingAnime + trendingAnime)
+                    .filter { it.type == MediaType.ANIME }
+                    .distinctBy { it.title }
+                if (mixedAnime.size > 6) {
+                    MediaRow(
+                        title = "All Anime",
+                        icon = Icons.Filled.Movie,
+                        items = mixedAnime,
+                        onMediaClick = onMediaClick,
+                        collapsedCount = 6
+                    )
+                }
+            }
+
+            // 3D Donghua Section
             item {
                 if (donghuaList.isNotEmpty()) {
                     MediaRow(
                         title = "3D Donghua",
                         icon = Icons.Filled.FlashOn,
                         items = donghuaList,
-                        onMediaClick = onMediaClick
+                        onMediaClick = onMediaClick,
+                        collapsedCount = 6
                     )
                 }
             }
 
-            // Korean Drama Section (from remote config)
+            // Korean Drama Section
             item {
                 if (drakorList.isNotEmpty()) {
                     MediaRow(
                         title = "Korean Drama",
                         icon = Icons.Filled.Favorite,
                         items = drakorList,
-                        onMediaClick = onMediaClick
+                        onMediaClick = onMediaClick,
+                        collapsedCount = 6
                     )
                 }
             }
+
+            // Spacer for bottom nav
+            item { Spacer(modifier = Modifier.height(16.dp)) }
         }
     }
 }

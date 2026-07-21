@@ -8,6 +8,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import org.jsoup.Jsoup
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.net.URLEncoder
 
 /**
@@ -20,12 +23,13 @@ class OtakudesuScraper : BaseScraper {
     override val sourceName: String = "Otakudesu"
     override val sourceKey: String = "otakudesu"
     private val client = OkHttpClientBuilder.buildUnsafeClient()
+    private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
 
     override suspend fun search(query: String, config: ProviderConfig): List<MediaItem> = withContext(Dispatchers.IO) {
         val list = mutableListOf<MediaItem>()
         try {
-            // Otakudesu search page is JS-rendered. Use ongoing page for static HTML.
             val domain = config.domain.trimEnd('/')
+            // Otakudesu search page is JS-rendered. Use ongoing page for static HTML.
             val ongoingUrl = "$domain/ongoing-anime/"
 
             val request = Request.Builder()
@@ -36,10 +40,7 @@ class OtakudesuScraper : BaseScraper {
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            // Otakudesu ongoing page structure:
-            // <div class="venz"><ul><li><div class='detpost'>
-            //   <div class="thumb"><a href="..."><div class="thumbz">
-            //     <img src="..." /><h2 class="jdlflm">Title</h2>
+            // Structure: .venz ul li .detpost > .thumb a[href] > .thumbz img + h2.jdlflm
             val items = doc.select(".venz ul li .detpost")
             for (element in items) {
                 val titleEl = element.selectFirst(".jdlflm")
@@ -48,11 +49,9 @@ class OtakudesuScraper : BaseScraper {
                 val mediaUrl = linkEl?.attr("abs:href") ?: ""
                 val imgEl = element.selectFirst(".thumbz img")
                 val posterUrl = imgEl?.attr("abs:src") ?: imgEl?.attr("abs:data-src") ?: ""
-                val epEl = element.selectFirst(".epz")
-                val episodeCount = epEl?.text()?.trim() ?: ""
 
                 if (title.isNotBlank() && mediaUrl.isNotBlank()) {
-                    // Case-insensitive fuzzy match
+                    // Fuzzy match
                     if (title.contains(query, ignoreCase = true) || query.contains(title, ignoreCase = true)) {
                         list.add(
                             MediaItem(
@@ -85,8 +84,7 @@ class OtakudesuScraper : BaseScraper {
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            // Otakudesu detail page episodes are links with /episode/ in the URL
-            // Inside <div class="episodelist">
+            // Episodes are links with /episode/ in the URL
             val epElements = doc.select("a[href*='/episode/']")
             var count = 1f
             for (el in epElements) {
@@ -126,7 +124,7 @@ class OtakudesuScraper : BaseScraper {
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            // 1. Base64 Decoded Stream Elements (otakudesu-specific)
+            // 1. Base64 Decoded Stream Elements
             val elements = doc.select("[data-content]")
             for (el in elements) {
                 val base64Content = el.attr("data-content")
@@ -136,11 +134,13 @@ class OtakudesuScraper : BaseScraper {
                         val decodedBytes = Base64.decode(base64Content, Base64.DEFAULT)
                         val decodedUrl = String(decodedBytes, Charsets.UTF_8)
                         if (decodedUrl.startsWith("http") && addedUrls.add(decodedUrl)) {
+                            // If it's a desustream wrapper, fetch actual video URL
+                            val resolvedUrl = resolveDesustreamUrl(decodedUrl)
                             streams.add(
                                 StreamData(
                                     serverName = serverName,
-                                    streamUrl = decodedUrl,
-                                    isIframe = decodedUrl.contains("<iframe") || !decodedUrl.endsWith(".mp4"),
+                                    streamUrl = resolvedUrl,
+                                    isIframe = resolvedUrl.contains("<iframe") || !resolvedUrl.endsWith(".mp4"),
                                     resolution = StreamResolution.HD_720p,
                                     priority = ServerPriority.HIGH
                                 )
@@ -158,6 +158,8 @@ class OtakudesuScraper : BaseScraper {
             for (iframe in iframes) {
                 val src = iframe.attr("abs:src").ifEmpty { iframe.attr("abs:data-src") }
                 if (src.isNotBlank() && !src.startsWith("about:") && addedUrls.add(src)) {
+                    // Resolve desustream wrapper to actual video URL
+                    val resolvedUrl = resolveDesustreamUrl(src)
                     val serverLabel = when {
                         src.contains("desustream", ignoreCase = true) -> "DesuStream HD"
                         src.contains("otaku", ignoreCase = true) -> "Otaku Server"
@@ -167,8 +169,8 @@ class OtakudesuScraper : BaseScraper {
                     streams.add(
                         StreamData(
                             serverName = serverLabel,
-                            streamUrl = src,
-                            isIframe = true,
+                            streamUrl = resolvedUrl,
+                            isIframe = false,
                             resolution = StreamResolution.HD_720p,
                             priority = ServerPriority.HIGH
                         )
@@ -176,7 +178,7 @@ class OtakudesuScraper : BaseScraper {
                 }
             }
 
-            // 3. Fallback Full Page Player
+            // 3. Fallback: load episode page directly
             if (addedUrls.add(episodeUrl)) {
                 streams.add(
                     StreamData(
@@ -201,5 +203,30 @@ class OtakudesuScraper : BaseScraper {
             )
         }
         streams
+    }
+
+    /**
+     * Resolve desustream wrapper URL to actual video URL.
+     * Fetches `?mode=json` and returns the video URL directly.
+     * Falls back to original URL if resolution fails.
+     */
+    private fun resolveDesustreamUrl(wrapperUrl: String): String {
+        if (!wrapperUrl.contains("desustream.info")) return wrapperUrl
+        return try {
+            val jsonUrl = "$wrapperUrl?mode=json&_=${System.currentTimeMillis()}"
+            val request = Request.Builder()
+                .url(jsonUrl)
+                .header("User-Agent", "Mozilla/5.0")
+                .header("Referer", wrapperUrl)
+                .build()
+            val response = client.newCall(request).execute()
+            val body = response.body?.string() ?: return wrapperUrl
+            val jsonObj = json.parseToJsonElement(body) as? JsonObject
+            val ok = jsonObj?.get("ok")?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
+            val video = jsonObj?.get("video")?.jsonPrimitive?.content ?: ""
+            if (ok && video.isNotBlank()) video else wrapperUrl
+        } catch (e: Exception) {
+            wrapperUrl
+        }
     }
 }

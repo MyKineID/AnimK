@@ -132,4 +132,43 @@ class ScraperRepository {
         }
         results.distinctBy { it.title }
     }
+
+    /**
+     * Fetch ongoing/latest anime from all active providers.
+     * Uses each provider's ongoing/popular page to get currently airing titles.
+     */
+    suspend fun fetchOngoing(limit: Int = 20): List<com.animk.app.data.model.MediaItem> = withContext(Dispatchers.IO) {
+        val results = mutableListOf<com.animk.app.data.model.MediaItem>()
+        val activeProviders = DirectorConfigProvider.getActiveProviders()
+
+        for ((key, config) in activeProviders) {
+            val scraper = SourceRegistry.getSource(key) ?: continue
+            try {
+                // Use empty or common search to get ongoing/popular from provider
+                val items = scraper.search("", config)
+                results.addAll(items)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        results.distinctBy { it.title }.take(limit)
+    }
+
+    /**
+     * Check if a title has episodes available from any active provider.
+     */
+    suspend fun hasEpisodes(title: String): Boolean = withContext(Dispatchers.IO) {
+        val activeProviders = DirectorConfigProvider.getActiveProviders()
+        for ((key, config) in activeProviders) {
+            val scraper = SourceRegistry.getSource(key) ?: continue
+            try {
+                val searchResults = scraper.search(title, config)
+                if (searchResults.isNotEmpty()) {
+                    val episodes = scraper.getEpisodes(searchResults.first().id, config)
+                    if (episodes.isNotEmpty()) return@withContext true
+                }
+            } catch (_: Exception) {}
+        }
+        false
+    }
 }
