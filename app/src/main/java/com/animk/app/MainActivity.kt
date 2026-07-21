@@ -7,6 +7,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.*
 import androidx.lifecycle.lifecycleScope
+import com.animk.app.data.cache.ScraperCache
+import com.animk.app.data.playback.WatchHistoryStore
 import com.animk.app.data.remoteconfig.DirectorConfigProvider
 import kotlinx.coroutines.launch
 import com.animk.app.ui.screen.MainScreen
@@ -19,6 +21,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         enableMaxRefreshRate()
         DirectorConfigProvider.init(this)
+        ScraperCache.init(this)
+        WatchHistoryStore.init(this)
         // Cached config is consumed by the UI immediately; refresh it without blocking startup.
         lifecycleScope.launch { DirectorConfigProvider.getConfig(forceRefresh = true) }
 

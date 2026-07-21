@@ -112,6 +112,10 @@ fun MainScreen(
                         playerMedia = it
                         playerEpisodeUrl = it.id // fallback: use media URL as episode URL
                     },
+                    onResumeWatching = { entry ->
+                        playerMedia = entry.media
+                        playerEpisodeUrl = entry.episodeSourceUrl
+                    },
                     onToggleMyList = { toggleMyList(it) },
                     myList = myListState,
                     modifier = contentModifier

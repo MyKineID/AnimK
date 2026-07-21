@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.Whatshot
@@ -21,6 +22,8 @@ import androidx.compose.ui.unit.sp
 import com.animk.app.data.model.MediaItem
 import com.animk.app.data.model.MediaType
 import com.animk.app.data.network.AniListApiService
+import com.animk.app.data.playback.WatchHistoryEntry
+import com.animk.app.data.playback.WatchHistoryStore
 import com.animk.app.data.repository.ScraperRepository
 import com.animk.app.ui.component.HeroBanner
 import com.animk.app.ui.component.MediaRow
@@ -33,6 +36,7 @@ import kotlinx.coroutines.launch
 fun HomeScreen(
     onMediaClick: (MediaItem) -> Unit,
     onPlayClick: (MediaItem) -> Unit,
+    onResumeWatching: (WatchHistoryEntry) -> Unit,
     onToggleMyList: (MediaItem) -> Unit,
     myList: List<MediaItem>,
     modifier: Modifier = Modifier
@@ -47,10 +51,12 @@ fun HomeScreen(
     var trendingAnime by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     var donghuaList by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     var drakorList by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
+    var continueWatching by remember { mutableStateOf<List<WatchHistoryEntry>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
 
     LaunchedEffect(Unit) {
         scope.launch {
+            continueWatching = WatchHistoryStore.history()
             try {
                 // Render the first screen as soon as its two essential requests finish.
                 val (ongoing, aniTrending) = coroutineScope {
@@ -124,6 +130,25 @@ fun HomeScreen(
                         onMediaClick = onMediaClick,
                         onPlayClick = onPlayClick,
                         onToggleMyList = onToggleMyList
+                    )
+                }
+            }
+
+            // Resume the exact episode and saved position.
+            item {
+                val historyItems = continueWatching.map { entry ->
+                    entry.media.copy(id = "${entry.media.id}#history#${entry.episodeSourceUrl}")
+                }
+                if (historyItems.isNotEmpty()) {
+                    MediaRow(
+                        title = "Continue Watching",
+                        icon = Icons.Filled.History,
+                        items = historyItems,
+                        onMediaClick = { item ->
+                            continueWatching.firstOrNull { "${it.media.id}#history#${it.episodeSourceUrl}" == item.id }
+                                ?.let(onResumeWatching)
+                        },
+                        collapsedCount = 6
                     )
                 }
             }

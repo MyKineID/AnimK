@@ -2,14 +2,17 @@ package com.animk.app.data.model
 
 import kotlinx.serialization.Serializable
 
+@Serializable
 enum class MediaType {
     ANIME, DONGHUA, DRAKOR
 }
 
+@Serializable
 enum class StreamResolution {
     HD_1080p, HD_720p, SD_480p, SD_360p, UNKNOWN
 }
 
+@Serializable
 enum class ServerPriority {
     HIGH, MEDIUM, LOW
 }
@@ -43,6 +46,7 @@ data class Episode(
     val duration: String = "24m"
 )
 
+@Serializable
 data class StreamData(
     val serverName: String,
     val streamUrl: String,

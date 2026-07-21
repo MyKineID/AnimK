@@ -145,7 +145,8 @@ class OtakudesuScraper : BaseScraper {
                             streams.add(StreamData(
                                 serverName = el.text().ifEmpty { "OtakuStream ${streams.size + 1}" },
                                 streamUrl = resolvedUrl, isIframe = !isDirectVideoUrl(resolvedUrl),
-                                resolution = StreamResolution.HD_720p, priority = ServerPriority.HIGH))
+                                resolution = StreamResolution.HD_720p, priority = ServerPriority.HIGH,
+                                additionalHeaders = if (decoded.contains("desustream", true)) mapOf("Referer" to decoded) else emptyMap()))
                         }
                     } catch (_: Exception) {}
                 }
@@ -162,7 +163,9 @@ class OtakudesuScraper : BaseScraper {
                         streamUrl = resolvedUrl,
                         // blogger.com/video.g is an HTML player page, not an MP4/HLS manifest.
                         isIframe = !isDirectVideoUrl(resolvedUrl),
-                        resolution = StreamResolution.HD_720p, priority = ServerPriority.HIGH))
+                        resolution = StreamResolution.HD_720p, priority = ServerPriority.HIGH,
+                        // Blogger validates the iframe origin; keep DesuStream as referrer.
+                        additionalHeaders = if (src.contains("desustream", true)) mapOf("Referer" to src) else emptyMap()))
                 }
             }
 

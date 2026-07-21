@@ -1,5 +1,6 @@
 package com.animk.app.data.repository
 
+import com.animk.app.data.cache.ScraperCache
 import com.animk.app.data.model.Episode
 import com.animk.app.data.model.StreamData
 import com.animk.app.data.remoteconfig.ProviderConfig
@@ -23,6 +24,7 @@ class ScraperRepository {
      * Returns a list of real Episode objects with source URLs.
      */
     suspend fun fetchEpisodesForTitle(title: String): List<Episode> = withContext(Dispatchers.IO) {
+        ScraperCache.getEpisodes(title)?.let { return@withContext it }
         val activeProviders = DirectorConfigProvider.getActiveProviders()
 
         for ((key, config) in activeProviders) {
@@ -32,10 +34,8 @@ class ScraperRepository {
                 if (searchResults.isNotEmpty()) {
                     val bestMatch = searchResults.first()
                     val episodes = scraper.getEpisodes(bestMatch.id, config)
-                    if (episodes.size > 1) {
-                        return@withContext episodes
-                    }
                     if (episodes.isNotEmpty()) {
+                        ScraperCache.putEpisodes(title, episodes)
                         return@withContext episodes
                     }
                 }
@@ -54,6 +54,7 @@ class ScraperRepository {
      */
     suspend fun fetchStreamsForEpisode(episodeUrl: String, animeTitle: String = ""): List<StreamData> = withContext(Dispatchers.IO) {
         if (!episodeUrl.startsWith("http")) return@withContext emptyList()
+        ScraperCache.getStreams(episodeUrl)?.let { return@withContext it }
 
         val resultStreams = mutableListOf<StreamData>()
         val addedUrls = mutableSetOf<String>()
@@ -73,7 +74,9 @@ class ScraperRepository {
             }
         }
 
-        resultStreams.sortedBy { it.priority.ordinal }
+        resultStreams.sortedBy { it.priority.ordinal }.also { streams ->
+            if (streams.isNotEmpty()) ScraperCache.putStreams(episodeUrl, streams)
+        }
     }
 
     private fun belongsToProvider(url: String, config: ProviderConfig): Boolean = try {
@@ -89,6 +92,8 @@ class ScraperRepository {
 
     /** Search across all active providers. Used by SearchScreen. */
     suspend fun searchAll(query: String): List<com.animk.app.data.model.MediaItem> = withContext(Dispatchers.IO) {
+        val cacheKey = "search_all:$query"
+        ScraperCache.getCatalog(cacheKey)?.let { return@withContext it }
         val results = mutableListOf<com.animk.app.data.model.MediaItem>()
         val activeProviders = DirectorConfigProvider.getActiveProviders()
 
@@ -100,11 +105,13 @@ class ScraperRepository {
                 e.printStackTrace()
             }
         }
-        results.distinctBy { it.title }
+        results.distinctBy { it.title }.also { ScraperCache.putCatalog(cacheKey, it) }
     }
 
     /** Search by type (anime, donghua, drakor) using active config providers. */
     suspend fun searchByType(query: String, type: com.animk.app.data.model.MediaType): List<com.animk.app.data.model.MediaItem> = withContext(Dispatchers.IO) {
+        val cacheKey = "search_type:${type.name}:$query"
+        ScraperCache.getCatalog(cacheKey)?.let { return@withContext it }
         val results = mutableListOf<com.animk.app.data.model.MediaItem>()
         val activeProviders = DirectorConfigProvider.getActiveProviders()
 
@@ -117,7 +124,7 @@ class ScraperRepository {
                 e.printStackTrace()
             }
         }
-        results.distinctBy { it.title }
+        results.distinctBy { it.title }.also { ScraperCache.putCatalog(cacheKey, it) }
     }
 
     /**
@@ -125,20 +132,21 @@ class ScraperRepository {
      * Uses each provider's ongoing/popular page to get currently airing titles.
      */
     suspend fun fetchOngoing(limit: Int = 20): List<com.animk.app.data.model.MediaItem> = withContext(Dispatchers.IO) {
+        val cacheKey = "ongoing:$limit"
+        ScraperCache.getCatalog(cacheKey)?.let { return@withContext it }
         val results = mutableListOf<com.animk.app.data.model.MediaItem>()
         val activeProviders = DirectorConfigProvider.getActiveProviders()
 
         for ((key, config) in activeProviders) {
             val scraper = SourceRegistry.getSource(key) ?: continue
             try {
-                // Use empty or common search to get ongoing/popular from provider
                 val items = scraper.search("", config)
                 results.addAll(items)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }
-        results.distinctBy { it.title }.take(limit)
+        results.distinctBy { it.title }.take(limit).also { ScraperCache.putCatalog(cacheKey, it) }
     }
 
     /**

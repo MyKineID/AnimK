@@ -50,6 +50,7 @@ import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import com.animk.app.data.model.MediaItem
 import com.animk.app.data.model.StreamData
+import com.animk.app.data.playback.WatchHistoryStore
 import com.animk.app.data.repository.ScraperRepository
 import com.animk.app.ui.theme.LocalCustomColors
 import kotlinx.coroutines.delay
@@ -75,6 +76,15 @@ fun NetflixMediaPlayerScreen(
     var exoPlayer by remember { mutableStateOf<ExoPlayer?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
     var playError by remember { mutableStateOf(false) }
+    var webView by remember { mutableStateOf<WebView?>(null) }
+    var resumePositionMs by remember(episodeSourceUrl) {
+        mutableLongStateOf(WatchHistoryStore.positionFor(episodeSourceUrl))
+    }
+    var hasRestoredPosition by remember(episodeSourceUrl) { mutableStateOf(false) }
+
+    fun saveProgress(positionMs: Long, durationMs: Long) {
+        WatchHistoryStore.saveProgress(media, episodeSourceUrl, media.title, positionMs, durationMs)
+    }
 
     LaunchedEffect(episodeSourceUrl, media.title) {
         isFetchingStreams = true
@@ -97,6 +107,7 @@ fun NetflixMediaPlayerScreen(
         }
 
         onDispose {
+            exoPlayer?.let { saveProgress(it.currentPosition, it.duration) }
             activity?.requestedOrientation = previousOrientation
             insetsController?.show(WindowInsetsCompat.Type.systemBars())
             exoPlayer?.release()
@@ -136,6 +147,8 @@ fun NetflixMediaPlayerScreen(
     LaunchedEffect(activeStream) {
         activeStream?.let { stream ->
             playError = false
+            resumePositionMs = WatchHistoryStore.positionFor(episodeSourceUrl)
+            hasRestoredPosition = false
             // ExoPlayer can only play media manifests/files. Blogger's video.g is an
             // HTML player, therefore it must stay in WebView.
             useWebView = stream.isIframe
@@ -143,9 +156,35 @@ fun NetflixMediaPlayerScreen(
                 exoPlayer?.apply {
                     stop()
                     setMediaItem(ExoMediaItem.fromUri(stream.streamUrl))
+                    if (resumePositionMs > 1_000L) {
+                        seekTo(resumePositionMs)
+                        hasRestoredPosition = true
+                    }
                     prepare()
                     playWhenReady = true
                     setPlaybackSpeed(if (is2xSpeedActive) 2.0f else playbackSpeed)
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(exoPlayer, activeStream) {
+        while (true) {
+            delay(10_000)
+            exoPlayer?.takeIf { it.isPlaying }?.let { saveProgress(it.currentPosition, it.duration) }
+        }
+    }
+
+    LaunchedEffect(webView, activeStream, useWebView) {
+        while (useWebView && webView != null) {
+            delay(10_000)
+            webView?.evaluateJavascript(
+                "(function(){var v=document.querySelector('video');return v?Math.floor(v.currentTime*1000)+'|'+Math.floor(v.duration*1000):''})()"
+            ) { result ->
+                result.trim('"').split('|').takeIf { it.size == 2 }?.let { values ->
+                    values[0].toLongOrNull()?.let { position ->
+                        saveProgress(position, values[1].toLongOrNull() ?: 0L)
+                    }
                 }
             }
         }
@@ -173,47 +212,52 @@ fun NetflixMediaPlayerScreen(
                     alpha = contentAlpha
                 }
                 .background(Color.Black, RoundedCornerShape((swipeProgress * 24).dp))
-                .pointerInput(Unit) {
-                    detectDragGestures(
-                        onDrag = { change, dragAmount ->
-                            change.consume()
-                            dragOffsetY += dragAmount.y
-                            if (dragOffsetY > 220f && !isLocked) onBack()
-                        },
-                        onDragEnd = { dragOffsetY = 0f },
-                        onDragCancel = { dragOffsetY = 0f }
-                    )
+                // Do not intercept touch events from the actual iframe player.
+                .pointerInput(useWebView) {
+                    if (!useWebView) {
+                        detectDragGestures(
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                dragOffsetY += dragAmount.y
+                                if (dragOffsetY > 220f && !isLocked) onBack()
+                            },
+                            onDragEnd = { dragOffsetY = 0f },
+                            onDragCancel = { dragOffsetY = 0f }
+                        )
+                    }
                 }
-                .pointerInput(isLocked) {
-                    detectTapGestures(
-                        onTap = { if (!isLocked) isControlsVisible = !isControlsVisible },
-                        onDoubleTap = { offset ->
-                            if (!isLocked) {
-                                val screenWidth = size.width
-                                if (offset.x < screenWidth / 2) {
-                                    showLeftDoubleTapBadge = true
+                .pointerInput(isLocked, useWebView) {
+                    if (!useWebView) {
+                        detectTapGestures(
+                            onTap = { if (!isLocked) isControlsVisible = !isControlsVisible },
+                            onDoubleTap = { offset ->
+                                if (!isLocked) {
+                                    val screenWidth = size.width
+                                    if (offset.x < screenWidth / 2) {
+                                        showLeftDoubleTapBadge = true
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        exoPlayer?.seekTo((exoPlayer?.currentPosition ?: 0) - 10000)
+                                    } else {
+                                        showRightDoubleTapBadge = true
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        exoPlayer?.seekTo((exoPlayer?.currentPosition ?: 0) + 10000)
+                                    }
+                                }
+                            },
+                            onPress = {
+                                if (!isLocked) {
+                                    tryAwaitRelease()
+                                    if (is2xSpeedActive) is2xSpeedActive = false
+                                }
+                            },
+                            onLongPress = {
+                                if (!isLocked) {
+                                    is2xSpeedActive = true
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    exoPlayer?.seekTo((exoPlayer?.currentPosition ?: 0) - 10000)
-                                } else {
-                                    showRightDoubleTapBadge = true
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    exoPlayer?.seekTo((exoPlayer?.currentPosition ?: 0) + 10000)
                                 }
                             }
-                        },
-                        onPress = {
-                            if (!isLocked) {
-                                tryAwaitRelease()
-                                if (is2xSpeedActive) is2xSpeedActive = false
-                            }
-                        },
-                        onLongPress = {
-                            if (!isLocked) {
-                                is2xSpeedActive = true
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            }
-                        }
-                    )
+                        )
+                    }
                 }
         ) {
             if (useWebView) {
@@ -230,10 +274,25 @@ fun NetflixMediaPlayerScreen(
                             }
                             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                             webChromeClient = WebChromeClient()
+                            webView = this
                             webViewClient = object : WebViewClient() {
+                                override fun onPageFinished(view: WebView, url: String) {
+                                    if (resumePositionMs <= 1_000L) return
+                                    // The Blogger player creates its video element asynchronously.
+                                    // Retry a few times, then let the page keep its default position.
+                                    repeat(4) { attempt ->
+                                        view.postDelayed({
+                                            view.evaluateJavascript(
+                                                "(function(){var v=document.querySelector('video');if(v){v.currentTime=${resumePositionMs / 1000.0};return 'ok'}return ''})()",
+                                                null
+                                            )
+                                        }, attempt * 1_000L)
+                                    }
+                                }
+
                                 override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean {
                                     val url = request?.url?.toString() ?: return false
-                                    if (url.endsWith(".mp4") || url.endsWith(".m3u8")) {
+                                    if (url.substringBefore('?').endsWith(".mp4") || url.substringBefore('?').endsWith(".m3u8")) {
                                         useWebView = false
                                         exoPlayer?.apply {
                                             stop(); setMediaItem(ExoMediaItem.fromUri(url)); prepare(); playWhenReady = true
@@ -243,11 +302,13 @@ fun NetflixMediaPlayerScreen(
                                     return false
                                 }
                             }
-                            activeStream?.let { loadUrl(it.streamUrl) }
+                            activeStream?.let { loadUrl(it.streamUrl, it.additionalHeaders) }
                         }
                     },
-                    update = { webView ->
-                        activeStream?.streamUrl?.takeIf { it != webView.url }?.let(webView::loadUrl)
+                    update = { view ->
+                        activeStream?.takeIf { it.streamUrl != view.url }?.let { stream ->
+                            view.loadUrl(stream.streamUrl, stream.additionalHeaders)
+                        }
                     },
                     modifier = Modifier.fillMaxSize()
                 )
@@ -280,6 +341,10 @@ fun NetflixMediaPlayerScreen(
                             activeStream?.let { stream ->
                                 val mediaItem = ExoMediaItem.fromUri(stream.streamUrl)
                                 player.setMediaItem(mediaItem)
+                                if (resumePositionMs > 1_000L && !hasRestoredPosition) {
+                                    player.seekTo(resumePositionMs)
+                                    hasRestoredPosition = true
+                                }
                                 player.prepare()
                                 player.playWhenReady = true
                                 player.setPlaybackSpeed(if (is2xSpeedActive) 2.0f else playbackSpeed)
@@ -423,7 +488,7 @@ fun NetflixMediaPlayerScreen(
                             TextButton(onClick = { useWebView = !useWebView }) {
                                 Icon(Icons.Filled.Language, contentDescription = null, tint = custom.primary.copy(alpha = 0.8f))
                                 Spacer(Modifier.width(4.dp))
-                                Text(if (useWebView) "ExoPlayer" else "WebView", color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Bold)
+                                Text(if (useWebView) "WebView aktif" else "ExoPlayer aktif", color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Bold)
                             }
                         }
                     }
