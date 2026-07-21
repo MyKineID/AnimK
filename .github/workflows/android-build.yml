@@ -40,6 +40,34 @@ jobs:
           message=$(tail -n 30 build-log.txt | tr '\n' ' ' | sed 's/%/%25/g; s/::/%3A%3A/g')
           echo "::error title=Gradle build failed::$message"
 
+      # ─── Kirim Error Log ke Telegram (jika gagal) ────────────
+      - name: Send Error Log to Telegram
+        if: failure()
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        shell: bash
+        run: |
+          LOG="build-log.txt"
+          ERROR_HEAD="$(head -5 "$LOG" 2>/dev/null || echo 'No log')"
+          ERROR_TAIL="$(tail -n 20 "$LOG" 2>/dev/null || echo 'No log')"
+          ERROR_SUMMARY=$(echo "$ERROR_HEAD" | grep -oP 'FAILURE:.*' || echo "$ERROR_TAIL" | head -3)
+          CAPTION="❌ *AnimK Build Failed!*"
+          CAPTION+=$'\n'
+          CAPTION+="📦 Commit: $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+          CAPTION+=$'\n'
+          CAPTION+="🌿 Branch: ${GITHUB_REF_NAME}"
+          CAPTION+=$'\n'
+          CAPTION+="📝 $(git log -1 --pretty=format:%s 2>/dev/null || echo '?')"
+          CAPTION+=$'\n\n'
+          CAPTION+="🔴 *Error:* ${ERROR_SUMMARY:-Unknown error}"
+          CAPTION+=$'\n'
+          CAPTION+="📎 File log terlampir untuk detail lengkap."
+          curl -s -F "chat_id=${CHAT_ID}" \
+               -F "document=@${LOG}" \
+               -F "caption=${CAPTION}" \
+               "https://api.telegram.org/bot${TOKEN}/sendDocument"
+
       - uses: actions/upload-artifact@v4
         with:
           name: AnimK-Release-APK
