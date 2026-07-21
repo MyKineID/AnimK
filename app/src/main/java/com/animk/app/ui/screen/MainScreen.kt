@@ -117,14 +117,14 @@ fun MainScreen(
                 )
             }
 
+            // Slide-up Detail Sheet stays preserved behind player so back button/swipe down returns to detail view!
             selectedMediaForDetail?.let { media ->
                 MediaDetailSheet(
                     media = media,
                     isInMyList = myListState.any { it.id == media.id },
                     onDismiss = { selectedMediaForDetail = null },
-                    onPlayClick = {
-                        selectedMediaForDetail = null
-                        selectedMediaForPlayer = it
+                    onPlayClick = { mediaItem ->
+                        selectedMediaForPlayer = mediaItem
                     },
                     onToggleMyList = { toggleMyList(it) }
                 )

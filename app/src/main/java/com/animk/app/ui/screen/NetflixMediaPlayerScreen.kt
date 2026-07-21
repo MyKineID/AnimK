@@ -1,6 +1,7 @@
 package com.animk.app.ui.screen
 
 import android.content.pm.ActivityInfo
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
@@ -8,18 +9,23 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.ThumbDown
+import androidx.compose.material.icons.outlined.ThumbUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -35,6 +41,14 @@ import coil3.compose.AsyncImage
 import com.animk.app.data.model.MediaItem
 import com.animk.app.ui.theme.LocalCustomColors
 import kotlinx.coroutines.delay
+
+data class CommentItem(
+    val id: String,
+    val author: String,
+    val text: String,
+    val timestamp: String,
+    val likesCount: Int = 12
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -53,7 +67,6 @@ fun NetflixMediaPlayerScreen(
         val previousOrientation = activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
 
-        // Hide Status Bar and Navigation Bar (Immersive Sticky)
         val insetsController = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
         insetsController?.apply {
             hide(WindowInsetsCompat.Type.systemBars())
@@ -76,12 +89,29 @@ fun NetflixMediaPlayerScreen(
     var aspectRatioMode by remember { mutableStateOf("Fit") }
     var showSpeedSheet by remember { mutableStateOf(false) }
     var showEpisodeSheet by remember { mutableStateOf(false) }
+    var showCommentsSheet by remember { mutableStateOf(false) }
+
+    // Interactive Social Stats State
+    var isLiked by remember { mutableStateOf(false) }
+    var isDisliked by remember { mutableStateOf(false) }
+    var likeCount by remember { mutableIntStateOf(14820) }
+    val viewsCount = "1.2M Views"
+
+    // Comments list state
+    val comments = remember {
+        mutableStateListOf(
+            CommentItem("c1", "OtakuKing99", "Solo leveling animation in this episode is insane! 🔥", "2m ago", 45),
+            CommentItem("c2", "KineFan_ID", "Sung Jinwoo leveling up sequence was epic! 10/10", "15m ago", 28),
+            CommentItem("c3", "AnimeLover2024", "Can't wait for episode 2 next week!", "1h ago", 14)
+        )
+    }
+    var newCommentText by remember { mutableStateOf("") }
 
     // Double tap feedback overlays
     var showLeftDoubleTapBadge by remember { mutableStateOf(false) }
     var showRightDoubleTapBadge by remember { mutableStateOf(false) }
 
-    // Drag vertical offset for Swipe Down to Exit
+    // Drag Y offset for Swipe Down Exit animation
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
 
     LaunchedEffect(showLeftDoubleTapBadge) {
@@ -108,13 +138,16 @@ fun NetflixMediaPlayerScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .graphicsLayer {
+                translationY = dragOffsetY.coerceAtLeast(0f)
+            }
             .background(Color.Black)
             .pointerInput(Unit) {
                 detectDragGestures(
                     onDrag = { change, dragAmount ->
                         change.consume()
                         dragOffsetY += dragAmount.y
-                        if (dragOffsetY > 150f && !isLocked) {
+                        if (dragOffsetY > 220f && !isLocked) {
                             onBack()
                         }
                     },
@@ -172,7 +205,7 @@ fun NetflixMediaPlayerScreen(
             }
         )
 
-        // Overlay Dimming when controls are visible
+        // Overlay Dimming
         if (isControlsVisible && !isLocked) {
             Box(
                 modifier = Modifier
@@ -181,7 +214,7 @@ fun NetflixMediaPlayerScreen(
             )
         }
 
-        // Top 2x Speed Pill
+        // Top 2x Speed Indicator Pill
         if (is2xSpeedActive) {
             Box(
                 modifier = Modifier
@@ -211,7 +244,7 @@ fun NetflixMediaPlayerScreen(
             }
         }
 
-        // YouTube-style Double Tap Badges
+        // Double Tap Badges
         if (showLeftDoubleTapBadge) {
             Box(
                 modifier = Modifier
@@ -303,17 +336,67 @@ fun NetflixMediaPlayerScreen(
                                 fontSize = 16.sp
                             )
                             Text(
-                                text = media.episodes.firstOrNull()?.title ?: "Episode 1",
+                                text = "${media.episodes.firstOrNull()?.title ?: "Episode 1"} • $viewsCount",
                                 color = custom.textSecondary,
                                 fontSize = 12.sp
                             )
                         }
                     }
 
-                    Row {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Like Button
+                        IconButton(onClick = {
+                            isLiked = !isLiked
+                            if (isLiked) {
+                                isDisliked = false
+                                likeCount++
+                            } else {
+                                likeCount--
+                            }
+                        }) {
+                            Icon(
+                                imageVector = if (isLiked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp,
+                                contentDescription = "Like",
+                                tint = if (isLiked) custom.primary else Color.White
+                            )
+                        }
+                        Text(
+                            text = "$likeCount",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        // Dislike Button
+                        IconButton(onClick = {
+                            isDisliked = !isDisliked
+                            if (isDisliked && isLiked) {
+                                isLiked = false
+                                likeCount--
+                            }
+                        }) {
+                            Icon(
+                                imageVector = if (isDisliked) Icons.Filled.ThumbDown else Icons.Outlined.ThumbDown,
+                                contentDescription = "Dislike",
+                                tint = if (isDisliked) Color.Red else Color.White
+                            )
+                        }
+
+                        // Comments Button
+                        IconButton(onClick = { showCommentsSheet = true }) {
+                            Icon(
+                                imageVector = Icons.Filled.Comment,
+                                contentDescription = "Comments",
+                                tint = custom.primary
+                            )
+                        }
+
                         IconButton(onClick = { showSpeedSheet = true }) {
                             Icon(Icons.Filled.Speed, contentDescription = "Speed", tint = Color.White)
                         }
+
                         IconButton(onClick = {
                             aspectRatioMode = when (aspectRatioMode) {
                                 "Fit" -> "Fill"
@@ -326,7 +409,7 @@ fun NetflixMediaPlayerScreen(
                     }
                 }
 
-                // Center Playback Controls with Animated Scale
+                // Center Playback Controls
                 Row(
                     modifier = Modifier
                         .align(Alignment.Center)
@@ -448,10 +531,10 @@ fun NetflixMediaPlayerScreen(
                             Text("Episodes", color = Color.White, fontWeight = FontWeight.Bold)
                         }
 
-                        TextButton(onClick = { /* Audio & Subtitles */ }) {
-                            Icon(Icons.Filled.Subtitles, contentDescription = "Subtitles", tint = Color.White)
+                        TextButton(onClick = { showCommentsSheet = true }) {
+                            Icon(Icons.Filled.Comment, contentDescription = "Comments", tint = Color.White)
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Audio & Sub", color = Color.White)
+                            Text("Comments (${comments.size})", color = Color.White)
                         }
                     }
                 }
@@ -459,7 +542,114 @@ fun NetflixMediaPlayerScreen(
         }
     }
 
-    // Speed Selection Modal Bottom Sheet
+    // Comments Sheet
+    if (showCommentsSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showCommentsSheet = false },
+            containerColor = custom.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Comments (${comments.size})", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = custom.textPrimary)
+                    IconButton(onClick = { showCommentsSheet = false }) {
+                        Icon(Icons.Filled.Close, contentDescription = "Close", tint = custom.textSecondary)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .heightIn(max = 240.dp)
+                ) {
+                    items(comments, key = { it.id }) { c ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(custom.primary),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(c.author.take(1), fontWeight = FontWeight.Bold, color = custom.onPrimary, fontSize = 14.sp)
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(c.author, fontWeight = FontWeight.Bold, color = custom.textPrimary, fontSize = 13.sp)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(c.timestamp, color = custom.textMuted, fontSize = 11.sp)
+                                }
+                                Text(c.text, color = custom.textSecondary, fontSize = 13.sp)
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Post New Comment Bar
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = newCommentText,
+                        onValueChange = { newCommentText = it },
+                        placeholder = { Text("Add a comment...", color = custom.textMuted) },
+                        modifier = Modifier.weight(1f),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = custom.cardSurface,
+                            unfocusedContainerColor = custom.cardSurface,
+                            focusedBorderColor = custom.primary,
+                            unfocusedBorderColor = Color.Transparent,
+                            focusedTextColor = custom.textPrimary,
+                            unfocusedTextColor = custom.textPrimary
+                        ),
+                        shape = RoundedCornerShape(20.dp),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    IconButton(
+                        onClick = {
+                            if (newCommentText.isNotBlank()) {
+                                comments.add(
+                                    0,
+                                    CommentItem(
+                                        id = "c_${System.currentTimeMillis()}",
+                                        author = "AnimK User",
+                                        text = newCommentText.trim(),
+                                        timestamp = "Just now"
+                                    )
+                                )
+                                newCommentText = ""
+                            }
+                        },
+                        modifier = Modifier
+                            .background(custom.primary, CircleShape)
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = custom.onPrimary)
+                    }
+                }
+            }
+        }
+    }
+
+    // Speed Selection Modal Sheet
     if (showSpeedSheet) {
         ModalBottomSheet(
             onDismissRequest = { showSpeedSheet = false },
