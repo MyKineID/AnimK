@@ -1,6 +1,5 @@
 package com.animk.app.ui.component
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -21,6 +20,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
@@ -30,40 +30,39 @@ import com.animk.app.ui.theme.LocalCustomColors
 @Composable
 fun HeroBanner(
     items: List<MediaItem>,
+    isInMyList: (MediaItem) -> Boolean,
+    onMediaClick: (MediaItem) -> Unit,
     onPlayClick: (MediaItem) -> Unit,
-    onDetailClick: (MediaItem) -> Unit,
-    onToggleMyList: (MediaItem) -> Unit,
-    myList: List<MediaItem>,
-    modifier: Modifier = Modifier
+    onToggleMyList: (MediaItem) -> Unit
 ) {
+    if (items.isEmpty()) return
     val custom = LocalCustomColors.current
     val pagerState = rememberPagerState(pageCount = { items.size })
 
     Box(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxWidth()
-            .height(450.dp)
+            .height(420.dp)
     ) {
         HorizontalPager(
             state = pagerState,
             modifier = Modifier.fillMaxSize()
         ) { page ->
             val media = items[page]
-            val isInMyList = myList.any { it.id == media.id }
 
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .clickable { onDetailClick(media) }
+                    .clickable { onMediaClick(media) }
             ) {
                 AsyncImage(
-                    model = media.backdropUrl.ifEmpty { media.posterUrl },
+                    model = media.backdropUrl ?: media.posterUrl,
                     contentDescription = media.title,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
                 )
 
-                // Scrim Gradient Overlay
+                // Top & Bottom Gradient
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -72,153 +71,98 @@ fun HeroBanner(
                                 colors = listOf(
                                     Color.Black.copy(alpha = 0.6f),
                                     Color.Transparent,
-                                    custom.background.copy(alpha = 0.85f),
                                     custom.background
                                 ),
                                 startY = 0f,
-                                endY = 1300f
+                                endY = 1200f
                             )
                         )
                 )
 
-                // Banner Content Bottom Controls
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 24.dp),
+                        .padding(horizontal = 24.dp, vertical = 20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // Badges row
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        if (media.isTop10) {
-                            Surface(
-                                color = Color.Red,
-                                shape = RoundedCornerShape(2.dp)
-                            ) {
-                                Text(
-                                    text = "TOP 10",
-                                    color = Color.White,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Black,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-
-                        Surface(
-                            color = custom.primary,
-                            shape = RoundedCornerShape(4.dp)
-                        ) {
-                            Text(
-                                text = media.quality,
-                                color = custom.onPrimary,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-
-                        Text(
-                            text = "${media.type.displayName} • ${media.releaseYear} • ${media.ageRating}",
-                            color = custom.textSecondary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
+                    // Title
+                    Text(
+                        text = media.title,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = custom.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
 
                     Spacer(modifier = Modifier.height(6.dp))
 
+                    // Genres Tag
                     Text(
-                        text = media.title,
-                        color = custom.textPrimary,
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        maxLines = 1
-                    )
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    Text(
-                        text = media.genres.joinToString(" • "),
-                        color = custom.textMuted,
+                        text = media.genres.take(3).joinToString(" • "),
                         fontSize = 12.sp,
-                        maxLines = 1
+                        color = custom.textSecondary,
+                        fontWeight = FontWeight.SemiBold
                     )
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
-                    // Action Buttons
+                    // Action Buttons Row
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        // My List Button
+                        OutlinedButton(
+                            onClick = { onToggleMyList(media) },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = custom.textPrimary),
+                            modifier = Modifier.height(40.dp)
+                        ) {
+                            val inList = isInMyList(media)
+                            Icon(
+                                if (inList) Icons.Filled.Check else Icons.Filled.Add,
+                                contentDescription = null,
+                                tint = if (inList) custom.primary else custom.textPrimary
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(if (inList) "In My List" else "My List", fontSize = 13.sp)
+                        }
+
+                        // Play Button
                         Button(
                             onClick = { onPlayClick(media) },
-                            modifier = Modifier.weight(1f).height(44.dp),
+                            shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = custom.primary,
                                 contentColor = custom.onPrimary
                             ),
-                            shape = RoundedCornerShape(8.dp)
+                            modifier = Modifier.height(40.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Filled.PlayArrow,
-                                contentDescription = "Play",
-                                tint = custom.onPrimary
-                            )
+                            Icon(Icons.Filled.PlayArrow, contentDescription = "Play")
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Play",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp
-                            )
-                        }
-
-                        OutlinedButton(
-                            onClick = { onToggleMyList(media) },
-                            modifier = Modifier.weight(1f).height(44.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = custom.textPrimary
-                            ),
-                            border = BorderStroke(1.dp, custom.cardSurface),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (isInMyList) Icons.Filled.Check else Icons.Filled.Add,
-                                contentDescription = "My List",
-                                tint = if (isInMyList) custom.primary else custom.textPrimary
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = if (isInMyList) "In My List" else "My List",
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 14.sp
-                            )
+                            Text("Play", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                     }
                 }
             }
         }
 
-        // Carousel Indicator Dots
+        // Pager Indicator Dots
         Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 8.dp),
+                .padding(bottom = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            repeat(items.size) { index ->
-                val isSelected = pagerState.currentPage == index
+            repeat(items.size) { iteration ->
+                val color = if (pagerState.currentPage == iteration) custom.primary else Color.White.copy(alpha = 0.4f)
                 Box(
                     modifier = Modifier
-                        .size(if (isSelected) 8.dp else 6.dp)
+                        .size(if (pagerState.currentPage == iteration) 8.dp else 6.dp)
                         .clip(CircleShape)
-                        .background(if (isSelected) custom.primary else custom.textMuted.copy(alpha = 0.5f))
+                        .background(color)
                 )
             }
         }

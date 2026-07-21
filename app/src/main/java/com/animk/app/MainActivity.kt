@@ -6,13 +6,10 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import com.animk.app.ui.screen.MainScreen
-import com.animk.app.ui.theme.AnimKTheme
 import com.animk.app.ui.theme.AppThemeAccent
+import com.animk.app.ui.theme.AnimKTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -33,24 +30,24 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun enableMaxRefreshRate() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            try {
-                val display = window.context.display
-                val maxRefreshRateMode = display?.supportedModes?.maxByOrNull { it.refreshRate }
-                if (maxRefreshRateMode != null) {
-                    val layoutParams = window.attributes
-                    layoutParams.preferredDisplayModeId = maxRefreshRateMode.modeId
-                    window.attributes = layoutParams
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val display = display
+                if (display != null) {
+                    val modes = display.supportedModes
+                    val maxMode = modes.maxByOrNull { it.refreshRate }
+                    if (maxMode != null) {
+                        val lp = window.attributes
+                        lp.preferredDisplayModeId = maxMode.modeId
+                        window.attributes = lp
+                    }
                 }
-            } catch (e: Exception) {
-                // Fallback gracefully if display mode cannot be queried
+            } else {
+                @Suppress("DEPRECATION")
+                window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
             }
-        } else {
-            @Suppress("DEPRECATION")
-            window.setFlags(
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
-            )
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 }

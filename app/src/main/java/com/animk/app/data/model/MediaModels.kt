@@ -1,36 +1,53 @@
 package com.animk.app.data.model
 
-enum class MediaType(val displayName: String) {
-    ANIME("Anime"),
-    DONGHUA("Donghua"),
-    DRAKOR("Drakor")
+import kotlinx.serialization.Serializable
+
+enum class MediaType {
+    ANIME, DONGHUA, DRAKOR
 }
 
-data class Episode(
-    val id: String,
-    val episodeNumber: Int,
-    val title: String,
-    val duration: String,
-    val thumbnailUrl: String,
-    val description: String = ""
-)
+enum class StreamResolution {
+    HD_1080p, HD_720p, SD_480p, SD_360p, UNKNOWN
+}
 
+enum class ServerPriority {
+    HIGH, MEDIUM, LOW
+}
+
+@Serializable
 data class MediaItem(
     val id: String,
     val title: String,
     val type: MediaType,
     val posterUrl: String,
-    val backdropUrl: String,
-    val description: String,
-    val matchPercentage: Int = 98,
-    val releaseYear: Int = 2024,
-    val ageRating: String = "16+",
-    val quality: String = "1080p",
-    val genres: List<String>,
-    val episodes: List<Episode> = emptyList(),
-    val isTop10: Boolean = false,
-    val topRank: Int? = null,
+    val backdropUrl: String? = null,
+    val description: String = "",
+    val averageScore: Int = 0,
+    val releaseYear: Int = 0,
+    val genres: List<String> = emptyList(),
     val isTrending: Boolean = false,
-    val isNewRelease: Boolean = false,
-    val isMyList: Boolean = false
+    val episodes: List<Episode> = emptyList(),
+    val matchPercentage: Int = 98,
+    val ageRating: String = "16+",
+    val quality: String = "HD"
+)
+
+@Serializable
+data class Episode(
+    val id: String,
+    val sourceUrl: String,
+    val episodeNumber: Float,
+    val title: String,
+    val thumbnailUrl: String? = null,
+    val description: String = "",
+    val duration: String = "24m"
+)
+
+data class StreamData(
+    val serverName: String,
+    val streamUrl: String,
+    val isIframe: Boolean,
+    val resolution: StreamResolution,
+    val priority: ServerPriority,
+    val additionalHeaders: Map<String, String> = emptyMap()
 )

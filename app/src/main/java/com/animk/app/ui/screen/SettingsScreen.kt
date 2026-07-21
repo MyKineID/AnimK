@@ -1,470 +1,265 @@
 package com.animk.app.ui.screen
 
-import android.widget.Toast
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.animk.app.data.repository.AuthRepository
 import com.animk.app.ui.theme.AppThemeAccent
 import com.animk.app.ui.theme.LocalCustomColors
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    activeAccent: AppThemeAccent = AppThemeAccent.NEON_GECKO,
-    onAccentChange: (AppThemeAccent) -> Unit = {},
+    activeAccent: AppThemeAccent,
+    onAccentChange: (AppThemeAccent) -> Unit,
+    onOpenAuthSheet: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val custom = LocalCustomColors.current
-    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val authRepository = remember { AuthRepository() }
 
-    var cellularDataMode by remember { mutableStateOf("Automatic") }
-    var downloadWifiOnly by remember { mutableStateOf(true) }
-    var downloadQuality by remember { mutableStateOf("High (1080p)") }
-    var notifyNewReleases by remember { mutableStateOf(true) }
-    var notifyRecommendations by remember { mutableStateOf(false) }
-
-    var cacheSizeMb by remember { mutableIntStateOf(148) }
-    var showSignOutSheet by remember { mutableStateOf(false) }
-    var showDataUsageSheet by remember { mutableStateOf(false) }
     var showThemeSheet by remember { mutableStateOf(false) }
+    var isLoggedIn by remember { mutableStateOf(authRepository.isUserLoggedIn()) }
+    val currentUser = authRepository.getCurrentUser()
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(custom.background)
-            .verticalScroll(rememberScrollState())
+            .statusBarsPadding()
             .padding(16.dp)
     ) {
         Text(
-            text = "App Settings",
+            text = "Settings",
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
             color = custom.textPrimary,
-            modifier = Modifier.padding(vertical = 12.dp)
+            modifier = Modifier.padding(bottom = 16.dp)
         )
 
-        // Profile Header Card (Profile Name: AnimK)
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp),
-            colors = CardDefaults.cardColors(containerColor = custom.surface),
-            shape = RoundedCornerShape(12.dp)
+        // Profile / Supabase Auth Card
+        Surface(
+            color = custom.surface,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
         ) {
             Row(
-                modifier = Modifier.padding(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
                     modifier = Modifier
-                        .size(56.dp)
-                        .clip(RoundedCornerShape(10.dp))
+                        .size(54.dp)
+                        .clip(CircleShape)
                         .background(custom.primary),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "A",
-                        fontSize = 28.sp,
-                        fontWeight = FontWeight.Black,
+                        text = if (isLoggedIn) (currentUser?.email?.take(1)?.uppercase() ?: "A") else "A",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
                         color = custom.onPrimary
                     )
                 }
 
-                Spacer(modifier = Modifier.width(16.dp))
+                Spacer(modifier = Modifier.width(14.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "AnimK",
-                        fontSize = 18.sp,
+                        text = if (isLoggedIn) (currentUser?.email ?: "AnimK Member") else "Guest User",
+                        fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
                         color = custom.textPrimary
                     )
-                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "Premium 4K + HDR Plan",
+                        text = if (isLoggedIn) "Supabase Account Verified" else "Sign in for comments & sync",
                         fontSize = 12.sp,
-                        color = custom.primary,
-                        fontWeight = FontWeight.Medium
+                        color = custom.textSecondary
                     )
                 }
 
-                Surface(
-                    color = custom.cardSurface,
-                    shape = CircleShape
-                ) {
-                    IconButton(onClick = {
-                        Toast.makeText(context, "Profile switching triggered", Toast.LENGTH_SHORT).show()
-                    }) {
-                        Icon(Icons.Filled.Edit, contentDescription = "Edit Profile", tint = custom.textPrimary)
+                if (isLoggedIn) {
+                    IconButton(
+                        onClick = {
+                            scope.launch {
+                                authRepository.signOut()
+                                isLoggedIn = false
+                            }
+                        }
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Logout", tint = Color(0xFFEF5350))
+                    }
+                } else {
+                    Button(
+                        onClick = onOpenAuthSheet,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = custom.primary,
+                            contentColor = custom.onPrimary
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Login", fontWeight = FontWeight.Bold)
                     }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
-        // Video Playback & Data Section
-        SettingsSectionTitle("VIDEO PLAYBACK & DATA")
-
-        SettingsClickItem(
-            icon = Icons.Filled.DataUsage,
-            title = "Cellular Data Usage",
-            subtitle = cellularDataMode,
-            onClick = { showDataUsageSheet = true }
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Downloads Section
-        SettingsSectionTitle("DOWNLOADS")
-
-        SettingsSwitchItem(
-            icon = Icons.Filled.Wifi,
-            title = "Wi-Fi Only Downloads",
-            subtitle = "Save mobile data when downloading content",
-            checked = downloadWifiOnly,
-            onCheckedChange = { downloadWifiOnly = it }
-        )
-
-        SettingsClickItem(
-            icon = Icons.Filled.HighQuality,
-            title = "Download Video Quality",
-            subtitle = downloadQuality,
-            onClick = {
-                downloadQuality = if (downloadQuality.contains("High")) "Standard (720p)" else "High (1080p)"
-                Toast.makeText(context, "Quality set to $downloadQuality", Toast.LENGTH_SHORT).show()
-            }
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Notifications Section
-        SettingsSectionTitle("NOTIFICATIONS")
-
-        SettingsSwitchItem(
-            icon = Icons.Filled.Notifications,
-            title = "New Episode Alerts",
-            subtitle = "Get notified when new episodes of your saved anime drop",
-            checked = notifyNewReleases,
-            onCheckedChange = { notifyNewReleases = it }
-        )
-
-        SettingsSwitchItem(
-            icon = Icons.Filled.ThumbUp,
-            title = "Personal Recommendations",
-            subtitle = "Occasional suggestions based on your watch history",
-            checked = notifyRecommendations,
-            onCheckedChange = { notifyRecommendations = it }
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Theme & Storage Section
-        SettingsSectionTitle("THEME & STORAGE")
-
-        SettingsClickItem(
-            icon = Icons.Filled.Palette,
-            title = "App Theme Accent",
-            subtitle = "${activeAccent.animalName} (Tap to change)",
-            onClick = { showThemeSheet = true }
-        )
-
-        SettingsClickItem(
-            icon = Icons.Filled.DeleteSweep,
-            title = "Clear Cache",
-            subtitle = "Used cache space: ${cacheSizeMb}MB",
-            onClick = {
-                cacheSizeMb = 0
-                Toast.makeText(context, "Cache successfully cleared!", Toast.LENGTH_SHORT).show()
-            }
-        )
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // Sign Out Button
-        Button(
-            onClick = { showSignOutSheet = true },
+        // App Accent Theme Selector Button
+        Surface(
+            color = custom.surface,
+            shape = RoundedCornerShape(12.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = custom.surface,
-                contentColor = MaterialTheme.colorScheme.error
-            ),
-            shape = RoundedCornerShape(8.dp)
+                .clickable { showThemeSheet = true }
         ) {
-            Icon(Icons.Filled.Logout, contentDescription = "Sign Out", tint = MaterialTheme.colorScheme.error)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Sign Out of AnimK", fontWeight = FontWeight.Bold)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Palette, contentDescription = null, tint = custom.primary)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text("App Theme Accent", fontWeight = FontWeight.SemiBold, color = custom.textPrimary)
+                        Text(activeAccent.displayName, fontSize = 12.sp, color = custom.textSecondary)
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(activeAccent.color)
+                )
+            }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
-        Text(
-            text = "AnimK Version 2.5.0 (15 Animal Themes Edition)",
-            color = custom.textMuted,
-            fontSize = 11.sp,
-            modifier = Modifier.align(Alignment.CenterHorizontally)
-        )
+        // High Refresh Rate Toggle Card
+        Surface(
+            color = custom.surface,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Speed, contentDescription = null, tint = custom.primary)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text("Dynamic High Refresh Rate", fontWeight = FontWeight.SemiBold, color = custom.textPrimary)
+                        Text("60Hz / 90Hz / 120Hz display optimization", fontSize = 12.sp, color = custom.textSecondary)
+                    }
+                }
+                Switch(
+                    checked = true,
+                    onCheckedChange = {},
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = custom.onPrimary,
+                        checkedTrackColor = custom.primary
+                    )
+                )
+            }
+        }
     }
 
-    // Compact 3-Column Grid Theme Bottom Sheet (No Alert Popups)
+    // Animal Theme Picker Sheet
     if (showThemeSheet) {
         ModalBottomSheet(
             onDismissRequest = { showThemeSheet = false },
-            containerColor = custom.surface,
-            contentColor = custom.textPrimary
+            containerColor = custom.surface
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .padding(16.dp)
             ) {
                 Text(
-                    text = "Choose Animal Theme Accent",
+                    text = "Select Animal Theme",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     color = custom.textPrimary
                 )
-                Text(
-                    text = "15 Sleek curated themes in a compact view",
-                    fontSize = 12.sp,
-                    color = custom.textMuted
-                )
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.height(340.dp)
+                    modifier = Modifier.heightIn(max = 300.dp)
                 ) {
-                    items(AppThemeAccent.entries) { accent ->
-                        val isSelected = activeAccent == accent
+                    items(AppThemeAccent.entries) { theme ->
+                        val isSelected = activeAccent == theme
                         Surface(
+                            color = if (isSelected) theme.color.copy(alpha = 0.2f) else custom.cardSurface,
+                            shape = RoundedCornerShape(8.dp),
                             modifier = Modifier
-                                .fillMaxWidth()
+                                .border(
+                                    width = if (isSelected) 2.dp else 0.dp,
+                                    color = if (isSelected) theme.color else Color.Transparent,
+                                    shape = RoundedCornerShape(8.dp)
+                                )
                                 .clickable {
-                                    onAccentChange(accent)
+                                    onAccentChange(theme)
                                     showThemeSheet = false
-                                    Toast.makeText(context, "Theme set to ${accent.animalName}", Toast.LENGTH_SHORT).show()
-                                },
-                            shape = RoundedCornerShape(10.dp),
-                            color = if (isSelected) custom.cardSurface else custom.background,
-                            border = BorderStroke(
-                                width = if (isSelected) 2.dp else 1.dp,
-                                color = if (isSelected) accent.primaryColor else custom.cardSurface
-                            )
+                                }
                         ) {
                             Column(
-                                modifier = Modifier.padding(8.dp),
+                                modifier = Modifier.padding(12.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(32.dp)
+                                        .size(28.dp)
                                         .clip(CircleShape)
-                                        .background(accent.primaryColor),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (isSelected) {
-                                        Icon(
-                                            Icons.Filled.Check,
-                                            contentDescription = null,
-                                            tint = accent.onPrimaryColor,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                }
+                                        .background(theme.color)
+                                )
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = accent.animalName,
+                                    text = theme.displayName,
                                     fontSize = 11.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (isSelected) accent.primaryColor else custom.textPrimary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = custom.textPrimary
                                 )
                             }
                         }
                     }
                 }
-
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
-    }
-
-    // Cellular Data Usage Bottom Sheet (No Alert Popups)
-    if (showDataUsageSheet) {
-        ModalBottomSheet(
-            onDismissRequest = { showDataUsageSheet = false },
-            containerColor = custom.surface
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Cellular Data Usage", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = custom.textPrimary)
-                Spacer(modifier = Modifier.height(12.dp))
-                listOf("Automatic", "Wi-Fi Only", "Save Data", "Maximum Data").forEach { mode ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                cellularDataMode = mode
-                                showDataUsageSheet = false
-                            }
-                            .padding(vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = mode,
-                            color = if (cellularDataMode == mode) custom.primary else custom.textPrimary,
-                            fontWeight = if (cellularDataMode == mode) FontWeight.Bold else FontWeight.Normal
-                        )
-                        if (cellularDataMode == mode) {
-                            Icon(Icons.Filled.Check, contentDescription = null, tint = custom.primary)
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-        }
-    }
-
-    // Sign Out Bottom Sheet (No Alert Popups)
-    if (showSignOutSheet) {
-        ModalBottomSheet(
-            onDismissRequest = { showSignOutSheet = false },
-            containerColor = custom.surface
-        ) {
-            Column(
-                modifier = Modifier.padding(20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Icon(Icons.Filled.Logout, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(40.dp))
-                Spacer(modifier = Modifier.height(12.dp))
-                Text("Sign Out of AnimK", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = custom.textPrimary)
-                Spacer(modifier = Modifier.height(6.dp))
-                Text("Are you sure you want to sign out of your account?", fontSize = 13.sp, color = custom.textSecondary)
-                Spacer(modifier = Modifier.height(20.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = { showSignOutSheet = false },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = custom.textPrimary)
-                    ) {
-                        Text("Cancel")
-                    }
-                    Button(
-                        onClick = {
-                            showSignOutSheet = false
-                            Toast.makeText(context, "Signed out of AnimK", Toast.LENGTH_SHORT).show()
-                        },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                    ) {
-                        Text("Sign Out", color = MaterialTheme.colorScheme.onError)
-                    }
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-        }
-    }
-}
-
-@Composable
-private fun SettingsSectionTitle(title: String) {
-    Text(
-        text = title,
-        color = LocalCustomColors.current.textMuted,
-        fontSize = 11.sp,
-        fontWeight = FontWeight.Bold,
-        letterSpacing = 1.sp,
-        modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp)
-    )
-}
-
-@Composable
-private fun SettingsClickItem(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    subtitle: String,
-    onClick: () -> Unit
-) {
-    val custom = LocalCustomColors.current
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(vertical = 12.dp, horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(icon, contentDescription = title, tint = custom.primary, modifier = Modifier.size(24.dp))
-        Spacer(modifier = Modifier.width(16.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = custom.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-            Text(subtitle, color = custom.textSecondary, fontSize = 12.sp)
-        }
-        Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = custom.textMuted)
-    }
-}
-
-@Composable
-private fun SettingsSwitchItem(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    val custom = LocalCustomColors.current
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 10.dp, horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(icon, contentDescription = title, tint = custom.primary, modifier = Modifier.size(24.dp))
-        Spacer(modifier = Modifier.width(16.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = custom.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-            Text(subtitle, color = custom.textSecondary, fontSize = 12.sp)
-        }
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = custom.onPrimary,
-                checkedTrackColor = custom.primary,
-                uncheckedThumbColor = custom.textMuted,
-                uncheckedTrackColor = custom.cardSurface
-            )
-        )
     }
 }

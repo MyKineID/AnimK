@@ -35,8 +35,11 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import coil3.compose.AsyncImage
 import com.animk.app.data.model.MediaItem
+import com.animk.app.data.model.StreamData
+import com.animk.app.data.scraper.AnimeOrchestrator
 import com.animk.app.ui.theme.LocalCustomColors
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,6 +50,21 @@ fun NetflixMediaPlayerScreen(
     val custom = LocalCustomColors.current
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
+
+    val orchestrator = remember { AnimeOrchestrator() }
+    var availableStreams by remember { mutableStateOf<List<StreamData>>(emptyList()) }
+    var activeStream by remember { mutableStateOf<StreamData?>(null) }
+    var isFetchingStreams by remember { mutableStateOf(true) }
+
+    LaunchedEffect(media.title) {
+        scope.launch {
+            val streams = orchestrator.getStreamsWaterfall(media.title)
+            availableStreams = streams
+            activeStream = streams.firstOrNull()
+            isFetchingStreams = false
+        }
+    }
 
     // Immersive Fullscreen Mode + Landscape Lock
     DisposableEffect(Unit) {
@@ -84,7 +102,6 @@ fun NetflixMediaPlayerScreen(
 
     // Drag Y offset for Swipe Down Exit animation
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
-    // Calculate opacity: starts at 1, fades to 0.3 as user drags down 220px
     val swipeProgress = (dragOffsetY.coerceIn(0f, 220f) / 220f)
     val contentAlpha = 1f - (swipeProgress * 0.7f)
     val contentScale = 1f - (swipeProgress * 0.1f)
@@ -117,7 +134,7 @@ fun NetflixMediaPlayerScreen(
     ) {
         // Behind-video backdrop (visible during swipe down)
         AsyncImage(
-            model = media.backdropUrl.ifEmpty { media.posterUrl },
+            model = media.backdropUrl ?: media.posterUrl,
             contentDescription = null,
             modifier = Modifier
                 .fillMaxSize()
@@ -189,7 +206,7 @@ fun NetflixMediaPlayerScreen(
         ) {
             // Fullscreen Video Backdrop
             AsyncImage(
-                model = media.backdropUrl.ifEmpty { media.posterUrl },
+                model = media.backdropUrl ?: media.posterUrl,
                 contentDescription = media.title,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = when (aspectRatioMode) {
@@ -199,9 +216,8 @@ fun NetflixMediaPlayerScreen(
                 }
             )
 
-            // Subtle gradient overlay when controls visible (not full dimming)
+            // Subtle gradient overlay when controls visible
             if (isControlsVisible && !isLocked) {
-                // Top gradient for title readability
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -209,14 +225,10 @@ fun NetflixMediaPlayerScreen(
                         .align(Alignment.TopCenter)
                         .background(
                             Brush.verticalGradient(
-                                colors = listOf(
-                                    Color.Black.copy(alpha = 0.6f),
-                                    Color.Transparent
-                                )
+                                colors = listOf(Color.Black.copy(alpha = 0.6f), Color.Transparent)
                             )
                         )
                 )
-                // Bottom gradient for slider readability
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -224,10 +236,7 @@ fun NetflixMediaPlayerScreen(
                         .align(Alignment.BottomCenter)
                         .background(
                             Brush.verticalGradient(
-                                colors = listOf(
-                                    Color.Transparent,
-                                    Color.Black.copy(alpha = 0.7f)
-                                )
+                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.7f))
                             )
                         )
                 )
@@ -295,7 +304,7 @@ fun NetflixMediaPlayerScreen(
                 }
             }
 
-            // Single Floating Lock Button when Locked
+            // Floating Lock Button when Locked
             if (isLocked) {
                 Box(
                     modifier = Modifier
@@ -319,7 +328,7 @@ fun NetflixMediaPlayerScreen(
                 }
             }
 
-            // Animated Full Controls Overlay (semi-transparent)
+            // Animated Controls Overlay
             AnimatedVisibility(
                 visible = isControlsVisible && !isLocked,
                 enter = fadeIn(),
@@ -327,7 +336,7 @@ fun NetflixMediaPlayerScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
-                    // Top Bar Controls
+                    // Top Bar
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -352,8 +361,8 @@ fun NetflixMediaPlayerScreen(
                                     fontSize = 16.sp
                                 )
                                 Text(
-                                    text = media.episodes.firstOrNull()?.title ?: "Episode 1",
-                                    color = Color.White.copy(alpha = 0.7f),
+                                    text = activeStream?.serverName ?: "Server: Auto Stream",
+                                    color = custom.primary,
                                     fontSize = 12.sp
                                 )
                             }
@@ -375,7 +384,7 @@ fun NetflixMediaPlayerScreen(
                         }
                     }
 
-                    // Center Playback Controls (semi-transparent)
+                    // Center Playback Controls
                     Row(
                         modifier = Modifier
                             .align(Alignment.Center)
@@ -384,22 +393,14 @@ fun NetflixMediaPlayerScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconButton(
-                            onClick = {
-                                currentPosition = (currentPosition - 10f).coerceAtLeast(0f)
-                            },
+                            onClick = { currentPosition = (currentPosition - 10f).coerceAtLeast(0f) },
                             modifier = Modifier
                                 .size(52.dp)
                                 .background(Color.Black.copy(alpha = 0.25f), CircleShape)
                         ) {
-                            Icon(
-                                Icons.Filled.FastRewind,
-                                contentDescription = "Rewind 10s",
-                                tint = Color.White.copy(alpha = 0.9f),
-                                modifier = Modifier.size(30.dp)
-                            )
+                            Icon(Icons.Filled.FastRewind, contentDescription = "Rewind 10s", tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(30.dp))
                         }
 
-                        // Semi-transparent Play/Pause Button with smooth animation
                         IconButton(
                             onClick = { isPlaying = !isPlaying },
                             modifier = Modifier
@@ -424,23 +425,16 @@ fun NetflixMediaPlayerScreen(
                         }
 
                         IconButton(
-                            onClick = {
-                                currentPosition = (currentPosition + 10f).coerceAtMost(totalDuration)
-                            },
+                            onClick = { currentPosition = (currentPosition + 10f).coerceAtMost(totalDuration) },
                             modifier = Modifier
                                 .size(52.dp)
                                 .background(Color.Black.copy(alpha = 0.25f), CircleShape)
                         ) {
-                            Icon(
-                                Icons.Filled.FastForward,
-                                contentDescription = "Forward 10s",
-                                tint = Color.White.copy(alpha = 0.9f),
-                                modifier = Modifier.size(30.dp)
-                            )
+                            Icon(Icons.Filled.FastForward, contentDescription = "Forward 10s", tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(30.dp))
                         }
                     }
 
-                    // Bottom Controls Bar & Slider
+                    // Bottom Bar & Slider
                     Column(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -497,12 +491,6 @@ fun NetflixMediaPlayerScreen(
                                 Icon(Icons.Filled.VideoLibrary, contentDescription = "Episodes", tint = custom.primary.copy(alpha = 0.8f))
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text("Episodes", color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Bold)
-                            }
-
-                            TextButton(onClick = { /* Audio & Subtitles */ }) {
-                                Icon(Icons.Filled.Subtitles, contentDescription = "Subtitles", tint = Color.White.copy(alpha = 0.7f))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Audio & Sub", color = Color.White.copy(alpha = 0.7f))
                             }
                         }
                     }

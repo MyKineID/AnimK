@@ -1,6 +1,6 @@
 package com.animk.app.ui.component
 
-import androidx.compose.animation.*
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -20,21 +20,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.animk.app.data.model.MediaItem
+import com.animk.app.data.repository.AuthRepository
+import com.animk.app.data.repository.SocialRepository
+import com.animk.app.data.repository.SupabaseComment
 import com.animk.app.ui.theme.LocalCustomColors
-
-data class CommentItem(
-    val id: String,
-    val author: String,
-    val text: String,
-    val timestamp: String,
-    val likesCount: Int = 12
-)
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,28 +40,34 @@ fun MediaDetailSheet(
     isInMyList: Boolean,
     onDismiss: () -> Unit,
     onPlayClick: (MediaItem) -> Unit,
-    onToggleMyList: (MediaItem) -> Unit
+    onToggleMyList: (MediaItem) -> Unit,
+    onRequireLogin: () -> Unit = {}
 ) {
     val custom = LocalCustomColors.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    // Social interaction state
-    var isLiked by remember { mutableStateOf(false) }
-    var isDisliked by remember { mutableStateOf(false) }
-    var likeCount by remember { mutableIntStateOf(14820) }
-    var dislikeCount by remember { mutableIntStateOf(342) }
-    val viewsCount = "1.2M"
-    var showCommentsSheet by remember { mutableStateOf(false) }
+    val authRepository = remember { AuthRepository() }
+    val socialRepository = remember { SocialRepository() }
 
-    // Comments state
-    val comments = remember {
-        mutableStateListOf(
-            CommentItem("c1", "OtakuKing99", "Solo leveling animation in this episode is insane! 🔥", "2m ago", 45),
-            CommentItem("c2", "KineFan_ID", "Sung Jinwoo leveling up sequence was epic! 10/10", "15m ago", 28),
-            CommentItem("c3", "AnimeLover2024", "Can't wait for episode 2 next week!", "1h ago", 14)
-        )
-    }
+    var likesCount by remember { mutableIntStateOf(128) }
+    var dislikesCount by remember { mutableIntStateOf(5) }
+    var userInteraction by remember { mutableStateOf<String?>(null) } // "LIKE" or "DISLIKE"
+
+    var commentsList by remember { mutableStateOf<List<SupabaseComment>>(emptyList()) }
     var newCommentText by remember { mutableStateOf("") }
+    var showCommentsSheet by remember { mutableStateOf(false) }
+    var isPostingComment by remember { mutableStateOf(false) }
+
+    LaunchedEffect(media.id) {
+        val (likes, dislikes) = socialRepository.getInteractionStats(media.id)
+        if (likes > 0 || dislikes > 0) {
+            likesCount = likes
+            dislikesCount = dislikes
+        }
+        commentsList = socialRepository.getComments(media.id)
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -87,7 +90,7 @@ fun MediaDetailSheet(
                 .fillMaxWidth()
                 .padding(bottom = 24.dp)
         ) {
-            // Header Image with Close Button
+            // Header Backdrop & Close
             item {
                 Box(
                     modifier = Modifier
@@ -95,7 +98,7 @@ fun MediaDetailSheet(
                         .height(200.dp)
                 ) {
                     AsyncImage(
-                        model = media.backdropUrl.ifEmpty { media.posterUrl },
+                        model = media.backdropUrl ?: media.posterUrl,
                         contentDescription = media.title,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
@@ -216,7 +219,7 @@ fun MediaDetailSheet(
                         }
 
                         OutlinedButton(
-                            onClick = { /* Download action */ },
+                            onClick = { Toast.makeText(context, "Download started...", Toast.LENGTH_SHORT).show() },
                             modifier = Modifier
                                 .weight(1f)
                                 .height(42.dp),
@@ -240,7 +243,7 @@ fun MediaDetailSheet(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // ========== Social Interaction Bar ==========
+                    // ========== Supabase Social Bar (Like, Dislike, Comments) ==========
                     Surface(
                         color = custom.cardSurface,
                         shape = RoundedCornerShape(12.dp),
@@ -256,19 +259,11 @@ fun MediaDetailSheet(
                             // Views
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable { }
-                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                             ) {
-                                Icon(
-                                    Icons.Filled.Visibility,
-                                    contentDescription = "Views",
-                                    tint = custom.textSecondary,
-                                    modifier = Modifier.size(22.dp)
-                                )
+                                Icon(Icons.Filled.Visibility, contentDescription = "Views", tint = custom.textSecondary, modifier = Modifier.size(22.dp))
                                 Spacer(modifier = Modifier.height(2.dp))
-                                Text(viewsCount, color = custom.textSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text("1.2M", color = custom.textSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                             }
 
                             // Like
@@ -277,26 +272,26 @@ fun MediaDetailSheet(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(8.dp))
                                     .clickable {
-                                        isLiked = !isLiked
-                                        if (isLiked) {
-                                            isDisliked = false
-                                            likeCount++
-                                        } else {
-                                            likeCount--
+                                        if (!authRepository.isUserLoggedIn()) {
+                                            onRequireLogin()
+                                            return@clickable
                                         }
+                                        userInteraction = "LIKE"
+                                        likesCount++
+                                        scope.launch { socialRepository.setInteraction(media.id, "LIKE") }
                                     }
                                     .padding(horizontal = 12.dp, vertical = 6.dp)
                             ) {
                                 Icon(
-                                    imageVector = if (isLiked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp,
+                                    imageVector = if (userInteraction == "LIKE") Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp,
                                     contentDescription = "Like",
-                                    tint = if (isLiked) custom.primary else custom.textSecondary,
+                                    tint = if (userInteraction == "LIKE") custom.primary else custom.textSecondary,
                                     modifier = Modifier.size(22.dp)
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = formatCount(likeCount),
-                                    color = if (isLiked) custom.primary else custom.textSecondary,
+                                    text = "$likesCount",
+                                    color = if (userInteraction == "LIKE") custom.primary else custom.textSecondary,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -308,30 +303,32 @@ fun MediaDetailSheet(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(8.dp))
                                     .clickable {
-                                        isDisliked = !isDisliked
-                                        if (isDisliked && isLiked) {
-                                            isLiked = false
-                                            likeCount--
+                                        if (!authRepository.isUserLoggedIn()) {
+                                            onRequireLogin()
+                                            return@clickable
                                         }
+                                        userInteraction = "DISLIKE"
+                                        dislikesCount++
+                                        scope.launch { socialRepository.setInteraction(media.id, "DISLIKE") }
                                     }
                                     .padding(horizontal = 12.dp, vertical = 6.dp)
                             ) {
                                 Icon(
-                                    imageVector = if (isDisliked) Icons.Filled.ThumbDown else Icons.Outlined.ThumbDown,
+                                    imageVector = if (userInteraction == "DISLIKE") Icons.Filled.ThumbDown else Icons.Outlined.ThumbDown,
                                     contentDescription = "Dislike",
-                                    tint = if (isDisliked) Color(0xFFEF5350) else custom.textSecondary,
+                                    tint = if (userInteraction == "DISLIKE") Color(0xFFEF5350) else custom.textSecondary,
                                     modifier = Modifier.size(22.dp)
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = formatCount(dislikeCount),
-                                    color = if (isDisliked) Color(0xFFEF5350) else custom.textSecondary,
+                                    text = "$dislikesCount",
+                                    color = if (userInteraction == "DISLIKE") Color(0xFFEF5350) else custom.textSecondary,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
 
-                            // Comments
+                            // Comments Button
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
@@ -339,14 +336,9 @@ fun MediaDetailSheet(
                                     .clickable { showCommentsSheet = true }
                                     .padding(horizontal = 12.dp, vertical = 6.dp)
                             ) {
-                                Icon(
-                                    Icons.Filled.ChatBubbleOutline,
-                                    contentDescription = "Comments",
-                                    tint = custom.textSecondary,
-                                    modifier = Modifier.size(22.dp)
-                                )
+                                Icon(Icons.Filled.ChatBubbleOutline, contentDescription = "Comments", tint = custom.textSecondary, modifier = Modifier.size(22.dp))
                                 Spacer(modifier = Modifier.height(2.dp))
-                                Text("${comments.size}", color = custom.textSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text("${commentsList.size}", color = custom.textSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -363,78 +355,101 @@ fun MediaDetailSheet(
             }
 
             // Episodes List
-            items(media.episodes) { ep ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onPlayClick(media) }
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
+            if (media.episodes.isEmpty()) {
+                item {
+                    Row(
                         modifier = Modifier
-                            .width(110.dp)
-                            .height(65.dp)
-                            .clip(RoundedCornerShape(6.dp))
+                            .fillMaxWidth()
+                            .clickable { onPlayClick(media) }
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        AsyncImage(
-                            model = ep.thumbnailUrl,
-                            contentDescription = ep.title,
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
-                        )
                         Box(
                             modifier = Modifier
-                                .fillMaxSize()
-                                .background(Color.Black.copy(alpha = 0.3f)),
+                                .width(110.dp)
+                                .height(65.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(custom.cardSurface),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                Icons.Filled.PlayArrow,
-                                contentDescription = "Play Ep",
-                                tint = custom.primary,
-                                modifier = Modifier.size(28.dp)
-                            )
+                            Icon(Icons.Filled.PlayArrow, contentDescription = "Play Ep", tint = custom.primary, modifier = Modifier.size(28.dp))
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text("Episode 1: Full Stream", fontWeight = FontWeight.SemiBold, color = custom.textPrimary, fontSize = 14.sp)
+                            Text("24m", color = custom.textMuted, fontSize = 12.sp)
                         }
                     }
-
-                    Spacer(modifier = Modifier.width(12.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                }
+            } else {
+                items(media.episodes) { ep ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onPlayClick(media) }
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(110.dp)
+                                .height(65.dp)
+                                .clip(RoundedCornerShape(6.dp))
                         ) {
-                            Text(
-                                text = ep.title,
-                                fontWeight = FontWeight.SemiBold,
-                                color = custom.textPrimary,
-                                fontSize = 14.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
+                            AsyncImage(
+                                model = ep.thumbnailUrl ?: media.backdropUrl ?: media.posterUrl,
+                                contentDescription = ep.title,
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
                             )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(Color.Black.copy(alpha = 0.3f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Filled.PlayArrow, contentDescription = "Play Ep", tint = custom.primary, modifier = Modifier.size(28.dp))
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = ep.title,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = custom.textPrimary,
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    text = ep.duration,
+                                    color = custom.textMuted,
+                                    fontSize = 12.sp
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = ep.duration,
-                                color = custom.textMuted,
-                                fontSize = 12.sp
+                                text = ep.description.ifEmpty { "Episode content from AnimK provider." },
+                                color = custom.textSecondary,
+                                fontSize = 12.sp,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = ep.description,
-                            color = custom.textSecondary,
-                            fontSize = 12.sp,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
                     }
                 }
             }
         }
     }
 
-    // Comments Bottom Sheet
+    // Supabase Comments Sheet
     if (showCommentsSheet) {
         ModalBottomSheet(
             onDismissRequest = { showCommentsSheet = false },
@@ -450,7 +465,7 @@ fun MediaDetailSheet(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Comments (${comments.size})", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = custom.textPrimary)
+                    Text("Comments (${commentsList.size})", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = custom.textPrimary)
                     IconButton(onClick = { showCommentsSheet = false }) {
                         Icon(Icons.Filled.Close, contentDescription = "Close", tint = custom.textSecondary)
                     }
@@ -458,36 +473,41 @@ fun MediaDetailSheet(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                LazyColumn(
-                    modifier = Modifier
-                        .weight(1f, fill = false)
-                        .heightIn(max = 280.dp)
-                ) {
-                    items(comments, key = { it.id }) { c ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.Top
-                        ) {
-                            Box(
+                if (commentsList.isEmpty()) {
+                    Text(
+                        text = "No comments yet. Be the first to comment!",
+                        color = custom.textMuted,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(vertical = 24.dp)
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .heightIn(max = 280.dp)
+                    ) {
+                        items(commentsList) { c ->
+                            Row(
                                 modifier = Modifier
-                                    .size(32.dp)
-                                    .clip(CircleShape)
-                                    .background(custom.primary),
-                                contentAlignment = Alignment.Center
+                                    .fillMaxWidth()
+                                    .padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.Top
                             ) {
-                                Text(c.author.take(1), fontWeight = FontWeight.Bold, color = custom.onPrimary, fontSize = 14.sp)
-                            }
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(c.author, fontWeight = FontWeight.Bold, color = custom.textPrimary, fontSize = 13.sp)
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(c.timestamp, color = custom.textMuted, fontSize = 11.sp)
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .background(custom.primary),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("U", fontWeight = FontWeight.Bold, color = custom.onPrimary, fontSize = 14.sp)
                                 }
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(c.text, color = custom.textSecondary, fontSize = 13.sp)
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("AnimK User", fontWeight = FontWeight.Bold, color = custom.textPrimary, fontSize = 13.sp)
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(c.content, color = custom.textSecondary, fontSize = 13.sp)
+                                }
                             }
                         }
                     }
@@ -495,7 +515,7 @@ fun MediaDetailSheet(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Post New Comment
+                // Comment Input Row
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -519,36 +539,37 @@ fun MediaDetailSheet(
                     Spacer(modifier = Modifier.width(8.dp))
                     IconButton(
                         onClick = {
+                            if (!authRepository.isUserLoggedIn()) {
+                                onRequireLogin()
+                                return@IconButton
+                            }
                             if (newCommentText.isNotBlank()) {
-                                comments.add(
-                                    0,
-                                    CommentItem(
-                                        id = "c_${System.currentTimeMillis()}",
-                                        author = "AnimK User",
-                                        text = newCommentText.trim(),
-                                        timestamp = "Just now"
-                                    )
-                                )
-                                newCommentText = ""
+                                isPostingComment = true
+                                scope.launch {
+                                    val success = socialRepository.addComment(media.id, newCommentText.trim())
+                                    isPostingComment = false
+                                    if (success) {
+                                        newCommentText = ""
+                                        commentsList = socialRepository.getComments(media.id)
+                                    } else {
+                                        Toast.makeText(context, "Failed to post comment", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
                             }
                         },
-                        modifier = Modifier
-                            .background(custom.primary, CircleShape)
+                        enabled = !isPostingComment,
+                        modifier = Modifier.background(custom.primary, CircleShape)
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = custom.onPrimary)
+                        if (isPostingComment) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), color = custom.onPrimary)
+                        } else {
+                            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = custom.onPrimary)
+                        }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
             }
         }
-    }
-}
-
-private fun formatCount(count: Int): String {
-    return when {
-        count >= 1_000_000 -> String.format("%.1fM", count / 1_000_000.0)
-        count >= 1_000 -> String.format("%.1fK", count / 1_000.0)
-        else -> "$count"
     }
 }

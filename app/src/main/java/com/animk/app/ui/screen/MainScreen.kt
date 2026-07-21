@@ -15,7 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.animk.app.data.model.MediaItem
-import com.animk.app.data.repository.MockDataRepository
+import com.animk.app.ui.component.AuthSheet
 import com.animk.app.ui.component.MediaDetailSheet
 import com.animk.app.ui.theme.AppThemeAccent
 import com.animk.app.ui.theme.LocalCustomColors
@@ -44,8 +44,9 @@ fun MainScreen(
 
     var selectedMediaForDetail by remember { mutableStateOf<MediaItem?>(null) }
     var selectedMediaForPlayer by remember { mutableStateOf<MediaItem?>(null) }
+    var showAuthSheet by remember { mutableStateOf(false) }
 
-    val myListState = remember { mutableStateListOf<MediaItem>().apply { addAll(MockDataRepository.drakorList.take(1)) } }
+    val myListState = remember { mutableStateListOf<MediaItem>() }
 
     fun toggleMyList(media: MediaItem) {
         val exists = myListState.any { it.id == media.id }
@@ -113,11 +114,12 @@ fun MainScreen(
                 3 -> SettingsScreen(
                     activeAccent = activeAccent,
                     onAccentChange = onAccentChange,
+                    onOpenAuthSheet = { showAuthSheet = true },
                     modifier = contentModifier
                 )
             }
 
-            // Slide-up Detail Sheet stays preserved behind player so back button/swipe down returns to detail view!
+            // Detail Sheet
             selectedMediaForDetail?.let { media ->
                 MediaDetailSheet(
                     media = media,
@@ -126,7 +128,16 @@ fun MainScreen(
                     onPlayClick = { mediaItem ->
                         selectedMediaForPlayer = mediaItem
                     },
-                    onToggleMyList = { toggleMyList(it) }
+                    onToggleMyList = { toggleMyList(it) },
+                    onRequireLogin = { showAuthSheet = true }
+                )
+            }
+
+            // Supabase Auth Sheet
+            if (showAuthSheet) {
+                AuthSheet(
+                    onDismiss = { showAuthSheet = false },
+                    onAuthSuccess = { showAuthSheet = false }
                 )
             }
         }

@@ -25,83 +25,67 @@ import com.animk.app.ui.theme.LocalCustomColors
 fun MediaCard(
     media: MediaItem,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    showRankNumber: Boolean = false
+    modifier: Modifier = Modifier
 ) {
     val custom = LocalCustomColors.current
     val shape = RoundedCornerShape(8.dp)
 
-    Row(
-        modifier = modifier.clickable { onClick() },
-        verticalAlignment = Alignment.Bottom
+    Card(
+        modifier = modifier
+            .width(125.dp)
+            .height(180.dp)
+            .clickable { onClick() },
+        shape = shape,
+        colors = CardDefaults.cardColors(containerColor = custom.cardSurface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
-        if (showRankNumber && media.topRank != null) {
-            Text(
-                text = "${media.topRank}",
-                fontSize = 72.sp,
-                fontWeight = FontWeight.Black,
-                color = custom.primary,
+        Box(modifier = Modifier.fillMaxSize()) {
+            AsyncImage(
+                model = media.posterUrl,
+                contentDescription = media.title,
                 modifier = Modifier
-                    .offset(x = 12.dp, y = 10.dp)
+                    .fillMaxSize()
+                    .clip(shape),
+                contentScale = ContentScale.Crop
             )
-        }
 
-        Card(
-            modifier = Modifier
-                .width(125.dp)
-                .height(180.dp),
-            shape = shape,
-            colors = CardDefaults.cardColors(containerColor = custom.cardSurface),
-            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-        ) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                AsyncImage(
-                    model = media.posterUrl,
-                    contentDescription = media.title,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clip(shape),
-                    contentScale = ContentScale.Crop
+            // Top quality badge
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .background(
+                        color = custom.primary,
+                        shape = RoundedCornerShape(4.dp)
+                    )
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = media.quality,
+                    color = custom.onPrimary,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold
                 )
+            }
 
-                // Top quality badge
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(6.dp)
-                        .background(
-                            color = custom.primary,
-                            shape = RoundedCornerShape(4.dp)
-                        )
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
-                ) {
-                    Text(
-                        text = media.quality,
-                        color = custom.onPrimary,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold
+            // Bottom title overlay
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .background(
+                        color = Color.Black.copy(alpha = 0.75f)
                     )
-                }
-
-                // Bottom title gradient overlay
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .align(Alignment.BottomCenter)
-                        .background(
-                            color = Color.Black.copy(alpha = 0.75f)
-                        )
-                        .padding(horizontal = 6.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        text = media.title,
-                        color = custom.textPrimary,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+                    .padding(horizontal = 6.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = media.title,
+                    color = custom.textPrimary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }

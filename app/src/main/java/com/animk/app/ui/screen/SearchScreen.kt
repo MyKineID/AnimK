@@ -1,49 +1,70 @@
 package com.animk.app.ui.screen
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil3.compose.AsyncImage
 import com.animk.app.data.model.MediaItem
-import com.animk.app.data.repository.MockDataRepository
-import com.animk.app.ui.component.MediaCard
+import com.animk.app.data.network.AniListApiService
+import com.animk.app.data.scraper.DonghuaScraper
+import com.animk.app.data.scraper.DrakorScraper
+import com.animk.app.data.scraper.KuramanimeScraper
 import com.animk.app.ui.theme.LocalCustomColors
+import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(
     onMediaClick: (MediaItem) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val custom = LocalCustomColors.current
+    val scope = rememberCoroutineScope()
+
     var searchQuery by remember { mutableStateOf("") }
-    var selectedGenre by remember { mutableStateOf("All") }
+    var searchResults by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
+    var isSearching by remember { mutableStateOf(false) }
 
-    val genres = listOf("All", "Action", "Romance", "Fantasy", "Drama", "Shounen", "Supernatural", "Thriller")
+    val aniListService = remember { AniListApiService() }
+    val kuramaScraper = remember { KuramanimeScraper() }
+    val donghuaScraper = remember { DonghuaScraper() }
+    val drakorScraper = remember { DrakorScraper() }
 
-    val allMedia = remember { MockDataRepository.getAllMedia() }
-
-    val filteredMedia = remember(searchQuery, selectedGenre) {
-        allMedia.filter { item ->
-            val matchesQuery = searchQuery.isBlank() || item.title.contains(searchQuery, ignoreCase = true)
-            val matchesGenre = selectedGenre == "All" || item.genres.contains(selectedGenre)
-            matchesQuery && matchesGenre
+    fun performSearch(query: String) {
+        if (query.isBlank()) return
+        isSearching = true
+        scope.launch {
+            try {
+                val results = mutableListOf<MediaItem>()
+                results.addAll(aniListService.searchAnime(query))
+                if (results.isEmpty()) {
+                    results.addAll(kuramaScraper.search(query))
+                    results.addAll(donghuaScraper.search(query))
+                    results.addAll(drakorScraper.search(query))
+                }
+                searchResults = results.distinctBy { it.title }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                isSearching = false
+            }
         }
     }
 
@@ -51,87 +72,63 @@ fun SearchScreen(
         modifier = modifier
             .fillMaxSize()
             .background(custom.background)
-            .padding(top = 8.dp)
+            .statusBarsPadding()
+            .padding(16.dp)
     ) {
-        // Search Bar
+        // Search Input Bar
         OutlinedTextField(
             value = searchQuery,
-            onValueChange = { searchQuery = it },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
+            onValueChange = {
+                searchQuery = it
+                if (it.length >= 3) {
+                    performSearch(it)
+                }
+            },
             placeholder = { Text("Search Anime, Donghua, Drakor...", color = custom.textMuted) },
             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = custom.primary) },
             trailingIcon = {
                 if (searchQuery.isNotEmpty()) {
-                    IconButton(onClick = { searchQuery = "" }) {
-                        Icon(Icons.Filled.Clear, contentDescription = "Clear", tint = custom.textSecondary)
+                    IconButton(onClick = {
+                        searchQuery = ""
+                        searchResults = emptyList()
+                    }) {
+                        Icon(Icons.Filled.Close, contentDescription = "Clear", tint = custom.textSecondary)
                     }
                 }
             },
+            modifier = Modifier.fillMaxWidth(),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = custom.surface,
                 unfocusedContainerColor = custom.surface,
                 focusedBorderColor = custom.primary,
-                unfocusedBorderColor = custom.cardSurface,
+                unfocusedBorderColor = Color.Transparent,
                 focusedTextColor = custom.textPrimary,
                 unfocusedTextColor = custom.textPrimary
             ),
-            shape = RoundedCornerShape(10.dp),
+            shape = RoundedCornerShape(12.dp),
             singleLine = true
         )
 
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Genre Filter Chips
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(genres) { genre ->
-                val isSelected = selectedGenre == genre
-                FilterChip(
-                    selected = isSelected,
-                    onClick = { selectedGenre = genre },
-                    label = {
-                        Text(
-                            text = genre,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                        )
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = custom.primary,
-                        selectedLabelColor = custom.onPrimary,
-                        containerColor = custom.surface,
-                        labelColor = custom.textSecondary
-                    ),
-                    border = BorderStroke(1.dp, if (isSelected) custom.primary else custom.cardSurface)
-                )
-            }
-        }
-
         Spacer(modifier = Modifier.height(16.dp))
 
-        Text(
-            text = if (searchQuery.isEmpty()) "Top Searches & Recommendations" else "Search Results (${filteredMedia.size})",
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Bold,
-            color = custom.textPrimary,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Results Grid
-        if (filteredMedia.isEmpty()) {
+        if (isSearching) {
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(32.dp),
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(color = custom.primary)
+            }
+        } else if (searchResults.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "No content found matching \"$searchQuery\"",
+                    text = if (searchQuery.isEmpty()) "Type to search for Anime, Donghua, or Drakor" else "No results found for '$searchQuery'",
                     color = custom.textMuted,
                     fontSize = 14.sp
                 )
@@ -139,17 +136,33 @@ fun SearchScreen(
         } else {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(3),
-                contentPadding = PaddingValues(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxSize()
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                modifier = Modifier.weight(1f)
             ) {
-                items(filteredMedia, key = { it.id }) { item ->
-                    MediaCard(
-                        media = item,
-                        onClick = { onMediaClick(item) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                items(searchResults, key = { it.id }) { item ->
+                    Column(
+                        modifier = Modifier.clickable { onMediaClick(item) }
+                    ) {
+                        AsyncImage(
+                            model = item.posterUrl,
+                            contentDescription = item.title,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(160.dp)
+                                .clip(RoundedCornerShape(8.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = item.title,
+                            color = custom.textPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }
