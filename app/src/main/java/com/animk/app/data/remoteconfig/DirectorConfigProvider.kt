@@ -74,8 +74,10 @@ object DirectorConfigProvider {
     suspend fun getActiveProviders(): List<Pair<String, ProviderConfig>> = withContext(Dispatchers.Default) {
         val config = getConfig()
         config.providers
-            .filter { it.value.active && it.value.domain.isNotBlank() }
+            .filter { (_, v) -> v.active && v.domain.isNotBlank() }
+            .entries
             .sortedBy { it.value.priority }
+            .map { it.key to it.value }
     }
 
     val configSource: String get() = currentSource
