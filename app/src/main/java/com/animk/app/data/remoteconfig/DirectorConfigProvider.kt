@@ -5,6 +5,8 @@ import android.util.Log
 import com.animk.app.data.network.OkHttpClientBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import okhttp3.Request
 
@@ -25,6 +27,7 @@ object DirectorConfigProvider {
 
     private var prefs: android.content.SharedPreferences? = null
     private var memoryConfig: DirectorConfig? = null
+    private val configMutex = Mutex()
     private var currentSource: String = "none"
 
     fun init(context: Context) {
@@ -34,36 +37,51 @@ object DirectorConfigProvider {
     /**
      * Returns the active DirectorConfig.
      *
-     * Priority:
-     * 1. Network fetch (fresh from VPS)
-     * 2. Cached JSON in SharedPreferences
-     * 3. Built-in minimal fallback
+     * A saved config is used immediately so first paint never waits for the VPS.
+     * A forced refresh (started by MainActivity) updates it in the background.
      */
     suspend fun getConfig(forceRefresh: Boolean = false): DirectorConfig {
-        if (!forceRefresh && memoryConfig != null) {
-            return memoryConfig!!
-        }
-
-        return try {
-            val config = fetchFromNetwork()
-            cacheConfig(config)
-            memoryConfig = config
-            currentSource = "network"
-            logSource()
-            config
-        } catch (e: Exception) {
-            val cached = getCachedConfig()
-            if (cached != null) {
+        if (!forceRefresh) {
+            memoryConfig?.let { return it }
+            getCachedConfig()?.let { cached ->
                 memoryConfig = cached
                 currentSource = "cache"
                 logSource()
                 return cached
             }
-            val fallback = getFallbackConfig()
-            memoryConfig = fallback
-            currentSource = "fallback"
-            logSource()
-            fallback
+        }
+
+        return configMutex.withLock {
+            if (!forceRefresh) {
+                memoryConfig?.let { return@withLock it }
+                getCachedConfig()?.let { cached ->
+                    memoryConfig = cached
+                    currentSource = "cache"
+                    logSource()
+                    return@withLock cached
+                }
+            }
+
+            try {
+                val config = fetchFromNetwork()
+                cacheConfig(config)
+                memoryConfig = config
+                currentSource = "network"
+                logSource()
+                config
+            } catch (e: Exception) {
+                getCachedConfig()?.let { cached ->
+                    memoryConfig = cached
+                    currentSource = "cache"
+                    logSource()
+                    return@withLock cached
+                }
+                getFallbackConfig().also { fallback ->
+                    memoryConfig = fallback
+                    currentSource = "fallback"
+                    logSource()
+                }
+            }
         }
     }
 

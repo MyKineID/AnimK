@@ -22,11 +22,11 @@ import com.animk.app.data.model.MediaItem
 import com.animk.app.data.model.MediaType
 import com.animk.app.data.network.AniListApiService
 import com.animk.app.data.repository.ScraperRepository
-import com.animk.app.data.scraper.SourceRegistry
-import com.animk.app.data.remoteconfig.DirectorConfigProvider
 import com.animk.app.ui.component.HeroBanner
 import com.animk.app.ui.component.MediaRow
 import com.animk.app.ui.theme.LocalCustomColors
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 @Composable
@@ -52,28 +52,23 @@ fun HomeScreen(
     LaunchedEffect(Unit) {
         scope.launch {
             try {
-                // Load ongoing anime from scrapers (otakudesu primary source)
-                val ongoing = scraperRepo.fetchOngoing(limit = 50)
-                ongoingAnime = ongoing.filter {
-                    it.type == MediaType.ANIME
-                }.distinctBy { it.title }
-
-                // Load AniList trending for hero banner + variety
-                val aniTrending = aniListService.getTrendingAnime(page = 1, perPage = 10)
-                // Keep only AniList anime that also exist in scrapers OR just show them anyway
-                // (some popular anime might not be in ongoing but have episodes in scrapers)
+                // Render the first screen as soon as its two essential requests finish.
+                val (ongoing, aniTrending) = coroutineScope {
+                    val ongoingRequest = async { scraperRepo.fetchOngoing(limit = 50) }
+                    val trendingRequest = async { aniListService.getTrendingAnime(page = 1, perPage = 10) }
+                    ongoingRequest.await() to trendingRequest.await()
+                }
+                ongoingAnime = ongoing.filter { it.type == MediaType.ANIME }.distinctBy { it.title }
                 trendingAnime = aniTrending
-
-                // Load donghua from all scrapers
-                donghuaList = scraperRepo.searchByType("", MediaType.DONGHUA).take(20)
-
-                // Load drakor from all scrapers
-                drakorList = scraperRepo.searchByType("", MediaType.DRAKOR).take(20)
             } catch (e: Exception) {
                 e.printStackTrace()
             } finally {
                 isLoading = false
             }
+
+            // These sections do not block the home screen or its first interaction.
+            launch { donghuaList = scraperRepo.searchByType("", MediaType.DONGHUA).take(20) }
+            launch { drakorList = scraperRepo.searchByType("", MediaType.DRAKOR).take(20) }
         }
     }
 

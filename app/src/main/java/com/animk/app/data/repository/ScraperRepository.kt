@@ -7,6 +7,7 @@ import com.animk.app.data.scraper.SourceRegistry
 import com.animk.app.data.remoteconfig.DirectorConfigProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.net.URI
 
 /**
  * Bridges AniList metadata → Scraper episode lists → Multi-server Stream URLs.
@@ -46,56 +47,42 @@ class ScraperRepository {
     }
 
     /**
-     * Get ALL available stream URLs for an episode.
-     * Tries all active providers from config, searching each for streams.
+     * Get stream URLs only from the provider that owns [episodeUrl].
+     *
+     * Passing an Otakudesu URL to every provider made the player wait for several
+     * unrelated HTTP requests and could select a different show's episode 1.
      */
     suspend fun fetchStreamsForEpisode(episodeUrl: String, animeTitle: String = ""): List<StreamData> = withContext(Dispatchers.IO) {
+        if (!episodeUrl.startsWith("http")) return@withContext emptyList()
+
         val resultStreams = mutableListOf<StreamData>()
         val addedUrls = mutableSetOf<String>()
         val activeProviders = DirectorConfigProvider.getActiveProviders()
+        val matchingProviders = activeProviders.filter { (_, config) ->
+            belongsToProvider(episodeUrl, config)
+        }
 
-        // 1. First, try each active provider with the direct episode URL
-        if (episodeUrl.startsWith("http")) {
-            for ((key, config) in activeProviders) {
-                val scraper = SourceRegistry.getSource(key) ?: continue
-                try {
-                    val streams = scraper.getStreams(episodeUrl, config)
-                    for (st in streams) {
-                        if (addedUrls.add(st.streamUrl)) {
-                            resultStreams.add(st)
-                        }
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
+        for ((key, config) in matchingProviders) {
+            val scraper = SourceRegistry.getSource(key) ?: continue
+            try {
+                scraper.getStreams(episodeUrl, config).forEach { stream ->
+                    if (addedUrls.add(stream.streamUrl)) resultStreams += stream
                 }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
 
-        // 2. If few streams found, try searching by title on other active providers
-        if (animeTitle.isNotBlank() && resultStreams.size < 3) {
-            for ((key, config) in activeProviders) {
-                val scraper = SourceRegistry.getSource(key) ?: continue
-                try {
-                    val searchResults = scraper.search(animeTitle, config)
-                    if (searchResults.isNotEmpty()) {
-                        val firstMatch = searchResults.first()
-                        val eps = scraper.getEpisodes(firstMatch.id, config)
-                        val matchingEp = eps.firstOrNull()
-                            ?: Episode(id = firstMatch.id, sourceUrl = firstMatch.id, episodeNumber = 1f, title = "Ep 1")
-                        val streams = scraper.getStreams(matchingEp.sourceUrl, config)
-                        for (st in streams) {
-                            if (addedUrls.add(st.streamUrl)) {
-                                resultStreams.add(st)
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-            }
-        }
+        resultStreams.sortedBy { it.priority.ordinal }
+    }
 
-        resultStreams
+    private fun belongsToProvider(url: String, config: ProviderConfig): Boolean = try {
+        val episodeHost = URI(url).host?.removePrefix("www.")?.lowercase()
+        val providerHost = URI(config.domain).host?.removePrefix("www.")?.lowercase()
+        episodeHost != null && providerHost != null &&
+            (episodeHost == providerHost || episodeHost.endsWith(".$providerHost"))
+    } catch (_: Exception) {
+        false
     }
 
     // ── Convenience methods for backward compatibility ──────────

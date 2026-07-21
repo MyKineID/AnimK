@@ -4,6 +4,8 @@ import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.view.ViewGroup
+import android.webkit.CookieManager
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
@@ -51,7 +53,6 @@ import com.animk.app.data.model.StreamData
 import com.animk.app.data.repository.ScraperRepository
 import com.animk.app.ui.theme.LocalCustomColors
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,7 +64,6 @@ fun NetflixMediaPlayerScreen(
     val custom = LocalCustomColors.current
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
-    val scope = rememberCoroutineScope()
 
     val scraperRepository = remember { ScraperRepository() }
     var availableStreams by remember { mutableStateOf<List<StreamData>>(emptyList()) }
@@ -77,13 +77,11 @@ fun NetflixMediaPlayerScreen(
     var playError by remember { mutableStateOf(false) }
 
     LaunchedEffect(episodeSourceUrl, media.title) {
-        scope.launch {
-            isFetchingStreams = true
-            val streams = scraperRepository.fetchStreamsForEpisode(episodeSourceUrl, media.title)
-            availableStreams = streams
-            activeStream = streams.firstOrNull()
-            isFetchingStreams = false
-        }
+        isFetchingStreams = true
+        val streams = scraperRepository.fetchStreamsForEpisode(episodeSourceUrl, media.title)
+        availableStreams = streams
+        activeStream = streams.firstOrNull()
+        isFetchingStreams = false
     }
 
     DisposableEffect(Unit) {
@@ -138,14 +136,17 @@ fun NetflixMediaPlayerScreen(
     LaunchedEffect(activeStream) {
         activeStream?.let { stream ->
             playError = false
-            useWebView = false
-            exoPlayer?.apply {
-                stop()
-                val mediaItem = ExoMediaItem.fromUri(stream.streamUrl)
-                setMediaItem(mediaItem)
-                prepare()
-                playWhenReady = true
-                setPlaybackSpeed(if (is2xSpeedActive) 2.0f else playbackSpeed)
+            // ExoPlayer can only play media manifests/files. Blogger's video.g is an
+            // HTML player, therefore it must stay in WebView.
+            useWebView = stream.isIframe
+            if (!stream.isIframe) {
+                exoPlayer?.apply {
+                    stop()
+                    setMediaItem(ExoMediaItem.fromUri(stream.streamUrl))
+                    prepare()
+                    playWhenReady = true
+                    setPlaybackSpeed(if (is2xSpeedActive) 2.0f else playbackSpeed)
+                }
             }
         }
     }
@@ -221,11 +222,14 @@ fun NetflixMediaPlayerScreen(
                         WebView(ctx).apply {
                             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                             settings.apply {
-                                javaScriptEnabled = true; domStorageEnabled = true
+                                javaScriptEnabled = true
+                                domStorageEnabled = true
                                 mediaPlaybackRequiresUserGesture = false
                                 mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                                userAgentString = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
+                                userAgentString = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36"
                             }
+                            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                            webChromeClient = WebChromeClient()
                             webViewClient = object : WebViewClient() {
                                 override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean {
                                     val url = request?.url?.toString() ?: return false
@@ -241,6 +245,9 @@ fun NetflixMediaPlayerScreen(
                             }
                             activeStream?.let { loadUrl(it.streamUrl) }
                         }
+                    },
+                    update = { webView ->
+                        activeStream?.streamUrl?.takeIf { it != webView.url }?.let(webView::loadUrl)
                     },
                     modifier = Modifier.fillMaxSize()
                 )
@@ -264,7 +271,9 @@ fun NetflixMediaPlayerScreen(
                                     isPlaying = playing
                                 }
                                 override fun onPlayerError(error: PlaybackException) {
-                                    playError = true
+                                    // A server can expose an HTML player behind a URL. Retry it
+                                    // in WebView rather than showing an immediate hard failure.
+                                    useWebView = true
                                 }
                             })
 
@@ -386,9 +395,11 @@ fun NetflixMediaPlayerScreen(
                         IconButton(onClick = { isLocked = true }) { Icon(Icons.Filled.LockOpen, contentDescription = "Lock", tint = Color.White.copy(alpha = 0.85f)) }
                     }
 
-                    Box(modifier = Modifier.align(Alignment.Center).fillMaxSize().clickable {
-                        exoPlayer?.let { if (it.isPlaying) it.pause() else it.play() }
-                    })
+                    if (!useWebView) {
+                        Box(modifier = Modifier.align(Alignment.Center).fillMaxSize().clickable {
+                            exoPlayer?.let { if (it.isPlaying) it.pause() else it.play() }
+                        })
+                    }
 
                     Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {

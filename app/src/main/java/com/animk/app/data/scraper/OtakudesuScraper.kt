@@ -141,9 +141,10 @@ class OtakudesuScraper : BaseScraper {
                     try {
                         val decoded = String(Base64.decode(b64, Base64.DEFAULT), Charsets.UTF_8)
                         if (decoded.startsWith("http") && addedUrls.add(decoded)) {
+                            val resolvedUrl = resolveDesustreamUrl(decoded)
                             streams.add(StreamData(
                                 serverName = el.text().ifEmpty { "OtakuStream ${streams.size + 1}" },
-                                streamUrl = resolveDesustreamUrl(decoded), isIframe = false,
+                                streamUrl = resolvedUrl, isIframe = !isDirectVideoUrl(resolvedUrl),
                                 resolution = StreamResolution.HD_720p, priority = ServerPriority.HIGH))
                         }
                     } catch (_: Exception) {}
@@ -155,9 +156,12 @@ class OtakudesuScraper : BaseScraper {
             for (iframe in doc.select(iframeSel)) {
                 val src = iframe.attr("abs:src").ifEmpty { iframe.attr("abs:data-src") }
                 if (src.isNotBlank() && !src.startsWith("about:") && addedUrls.add(src)) {
+                    val resolvedUrl = resolveDesustreamUrl(src)
                     streams.add(StreamData(
                         serverName = if (src.contains("desustream", true)) "DesuStream HD" else "Server ${streams.size + 1}",
-                        streamUrl = resolveDesustreamUrl(src), isIframe = false,
+                        streamUrl = resolvedUrl,
+                        // blogger.com/video.g is an HTML player page, not an MP4/HLS manifest.
+                        isIframe = !isDirectVideoUrl(resolvedUrl),
                         resolution = StreamResolution.HD_720p, priority = ServerPriority.HIGH))
                 }
             }
@@ -172,16 +176,28 @@ class OtakudesuScraper : BaseScraper {
     }
 
     private fun resolveDesustreamUrl(wrapperUrl: String): String {
-        if (!wrapperUrl.contains("desustream.info")) return wrapperUrl
+        if (!wrapperUrl.contains("desustream.info", ignoreCase = true)) return wrapperUrl
         return try {
-            val resp = client.newCall(Request.Builder().url("$wrapperUrl?mode=json&_=${System.currentTimeMillis()}")
-                .header("User-Agent", "Mozilla/5.0").header("Referer", wrapperUrl).build()).execute()
-            val body = resp.body?.string() ?: return wrapperUrl
-            val obj = json.parseToJsonElement(body) as? JsonObject
-            if (obj?.get("ok")?.jsonPrimitive?.content?.toBooleanStrictOrNull() == true) {
-                obj["video"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: wrapperUrl
-            } else wrapperUrl
+            // Wrapper URLs already contain ?id=..., so mode must be appended with '&'.
+            val separator = if (wrapperUrl.contains('?')) "&" else "?"
+            val jsonUrl = "$wrapperUrl${separator}mode=json&_=${System.currentTimeMillis()}"
+            client.newCall(Request.Builder().url(jsonUrl)
+                .header("User-Agent", "Mozilla/5.0")
+                .header("Referer", wrapperUrl)
+                .build()).execute().use { resp ->
+                val body = resp.body?.string() ?: return@use wrapperUrl
+                val obj = json.parseToJsonElement(body) as? JsonObject
+                if (obj?.get("ok")?.jsonPrimitive?.content?.toBooleanStrictOrNull() == true) {
+                    obj["video"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: wrapperUrl
+                } else wrapperUrl
+            }
         } catch (_: Exception) { wrapperUrl }
+    }
+
+    private fun isDirectVideoUrl(url: String): Boolean {
+        val path = url.substringBefore('?').lowercase(Locale.ROOT)
+        return path.endsWith(".mp4") || path.endsWith(".m3u8") ||
+            path.endsWith(".webm") || path.endsWith(".mkv")
     }
 
     /** Extract anime title from detail page. */
