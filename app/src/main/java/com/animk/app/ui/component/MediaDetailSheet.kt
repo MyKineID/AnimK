@@ -9,11 +9,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.ThumbDown
+import androidx.compose.material.icons.outlined.ThumbUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,6 +28,14 @@ import coil3.compose.AsyncImage
 import com.animk.app.data.model.MediaItem
 import com.animk.app.ui.theme.LocalCustomColors
 
+data class CommentItem(
+    val id: String,
+    val author: String,
+    val text: String,
+    val timestamp: String,
+    val likesCount: Int = 12
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MediaDetailSheet(
@@ -40,6 +47,24 @@ fun MediaDetailSheet(
 ) {
     val custom = LocalCustomColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    // Social interaction state
+    var isLiked by remember { mutableStateOf(false) }
+    var isDisliked by remember { mutableStateOf(false) }
+    var likeCount by remember { mutableIntStateOf(14820) }
+    var dislikeCount by remember { mutableIntStateOf(342) }
+    val viewsCount = "1.2M"
+    var showCommentsSheet by remember { mutableStateOf(false) }
+
+    // Comments state
+    val comments = remember {
+        mutableStateListOf(
+            CommentItem("c1", "OtakuKing99", "Solo leveling animation in this episode is insane! 🔥", "2m ago", 45),
+            CommentItem("c2", "KineFan_ID", "Sung Jinwoo leveling up sequence was epic! 10/10", "15m ago", 28),
+            CommentItem("c3", "AnimeLover2024", "Can't wait for episode 2 next week!", "1h ago", 14)
+        )
+    }
+    var newCommentText by remember { mutableStateOf("") }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -62,7 +87,7 @@ fun MediaDetailSheet(
                 .fillMaxWidth()
                 .padding(bottom = 24.dp)
         ) {
-            // Header Image with Animated Close Button
+            // Header Image with Close Button
             item {
                 Box(
                     modifier = Modifier
@@ -149,7 +174,7 @@ fun MediaDetailSheet(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // Big Animated Play Button
+                    // Big Play Button
                     Button(
                         onClick = { onPlayClick(media) },
                         modifier = Modifier
@@ -212,6 +237,119 @@ fun MediaDetailSheet(
                         fontSize = 13.sp,
                         lineHeight = 18.sp
                     )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // ========== Social Interaction Bar ==========
+                    Surface(
+                        color = custom.cardSurface,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Views
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.Visibility,
+                                    contentDescription = "Views",
+                                    tint = custom.textSecondary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(viewsCount, color = custom.textSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            // Like
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        isLiked = !isLiked
+                                        if (isLiked) {
+                                            isDisliked = false
+                                            likeCount++
+                                        } else {
+                                            likeCount--
+                                        }
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isLiked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp,
+                                    contentDescription = "Like",
+                                    tint = if (isLiked) custom.primary else custom.textSecondary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = formatCount(likeCount),
+                                    color = if (isLiked) custom.primary else custom.textSecondary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            // Dislike
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        isDisliked = !isDisliked
+                                        if (isDisliked && isLiked) {
+                                            isLiked = false
+                                            likeCount--
+                                        }
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isDisliked) Icons.Filled.ThumbDown else Icons.Outlined.ThumbDown,
+                                    contentDescription = "Dislike",
+                                    tint = if (isDisliked) Color(0xFFEF5350) else custom.textSecondary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = formatCount(dislikeCount),
+                                    color = if (isDisliked) Color(0xFFEF5350) else custom.textSecondary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            // Comments
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { showCommentsSheet = true }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.ChatBubbleOutline,
+                                    contentDescription = "Comments",
+                                    tint = custom.textSecondary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text("${comments.size}", color = custom.textSecondary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
 
                     Spacer(modifier = Modifier.height(20.dp))
 
@@ -294,5 +432,123 @@ fun MediaDetailSheet(
                 }
             }
         }
+    }
+
+    // Comments Bottom Sheet
+    if (showCommentsSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showCommentsSheet = false },
+            containerColor = custom.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Comments (${comments.size})", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = custom.textPrimary)
+                    IconButton(onClick = { showCommentsSheet = false }) {
+                        Icon(Icons.Filled.Close, contentDescription = "Close", tint = custom.textSecondary)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .heightIn(max = 280.dp)
+                ) {
+                    items(comments, key = { it.id }) { c ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(custom.primary),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(c.author.take(1), fontWeight = FontWeight.Bold, color = custom.onPrimary, fontSize = 14.sp)
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(c.author, fontWeight = FontWeight.Bold, color = custom.textPrimary, fontSize = 13.sp)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(c.timestamp, color = custom.textMuted, fontSize = 11.sp)
+                                }
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(c.text, color = custom.textSecondary, fontSize = 13.sp)
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Post New Comment
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = newCommentText,
+                        onValueChange = { newCommentText = it },
+                        placeholder = { Text("Add a comment...", color = custom.textMuted) },
+                        modifier = Modifier.weight(1f),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = custom.cardSurface,
+                            unfocusedContainerColor = custom.cardSurface,
+                            focusedBorderColor = custom.primary,
+                            unfocusedBorderColor = Color.Transparent,
+                            focusedTextColor = custom.textPrimary,
+                            unfocusedTextColor = custom.textPrimary
+                        ),
+                        shape = RoundedCornerShape(20.dp),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    IconButton(
+                        onClick = {
+                            if (newCommentText.isNotBlank()) {
+                                comments.add(
+                                    0,
+                                    CommentItem(
+                                        id = "c_${System.currentTimeMillis()}",
+                                        author = "AnimK User",
+                                        text = newCommentText.trim(),
+                                        timestamp = "Just now"
+                                    )
+                                )
+                                newCommentText = ""
+                            }
+                        },
+                        modifier = Modifier
+                            .background(custom.primary, CircleShape)
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = custom.onPrimary)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+        }
+    }
+}
+
+private fun formatCount(count: Int): String {
+    return when {
+        count >= 1_000_000 -> String.format("%.1fM", count / 1_000_000.0)
+        count >= 1_000 -> String.format("%.1fK", count / 1_000.0)
+        else -> "$count"
     }
 }
