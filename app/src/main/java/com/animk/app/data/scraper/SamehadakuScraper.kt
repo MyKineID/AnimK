@@ -21,13 +21,12 @@ class SamehadakuScraper : BaseScraper {
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            val items = doc.select(".animepost, article.animposx")
+            val items = doc.select("article.animposx, div.animposx")
             for (element in items) {
                 val linkEl = element.selectFirst("a[href]")
                 val mediaUrl = linkEl?.attr("abs:href") ?: ""
-                val title = element.select(".title, .entry-title, h2").text()
-                val posterUrl = element.select("img").attr("abs:src")
-                    .ifEmpty { element.select("img").attr("src") }
+                val title = element.select(".title, h2").text()
+                val posterUrl = element.select("img").attr("src")
 
                 if (title.isNotBlank() && mediaUrl.isNotBlank()) {
                     list.add(
@@ -37,7 +36,8 @@ class SamehadakuScraper : BaseScraper {
                             type = MediaType.ANIME,
                             posterUrl = posterUrl.ifEmpty { "https://picsum.photos/300/450" },
                             backdropUrl = posterUrl,
-                            description = "Samehadaku streaming source"
+                            description = "Samehadaku stream source",
+                            genres = listOf("Action", "Anime")
                         )
                     )
                 }
@@ -56,12 +56,12 @@ class SamehadakuScraper : BaseScraper {
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            val epElements = doc.select(".lister ephash, .lister ul li a, .epsselect option")
+            val epElements = doc.select(".lepisodes ul li a, .epsselect option, a[href*='/episode/']")
             var count = 1f
             for (el in epElements) {
                 val epUrl = el.attr("abs:href").ifEmpty { el.attr("value") }
                 val epTitle = el.text().ifEmpty { "Episode $count" }
-                if (epUrl.isNotBlank() && epUrl.startsWith("http")) {
+                if (epUrl.startsWith("http") && !episodes.any { it.sourceUrl == epUrl }) {
                     episodes.add(
                         Episode(
                             id = epUrl,
@@ -84,20 +84,29 @@ class SamehadakuScraper : BaseScraper {
 
     override suspend fun getStreams(episodeUrl: String): List<StreamData> = withContext(Dispatchers.IO) {
         val streams = mutableListOf<StreamData>()
+        val addedUrls = mutableSetOf<String>()
+
         try {
-            val request = Request.Builder().url(episodeUrl).build()
+            val request = Request.Builder()
+                .url(episodeUrl)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .build()
             val response = client.newCall(request).execute()
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            val iframes = doc.select("iframe[src]")
+            // 1. Iframes
+            val iframes = doc.select("iframe[src], iframe[data-src], #embed_holder iframe")
             for (iframe in iframes) {
-                val src = iframe.attr("abs:src")
-                if (src.isNotBlank()) {
+                val src = iframe.attr("abs:src").ifEmpty { iframe.attr("abs:data-src") }
+                if (src.isNotBlank() && !src.startsWith("about:") && addedUrls.add(src)) {
                     val name = when {
                         src.contains("mega", ignoreCase = true) -> "Mega 1080p"
                         src.contains("wibu", ignoreCase = true) -> "Wibufile HD"
-                        else -> "Samehadaku Server"
+                        src.contains("kraken", ignoreCase = true) -> "Krakenfiles HD"
+                        src.contains("pixeldrain", ignoreCase = true) -> "Pixeldrain"
+                        src.contains("streamwish", ignoreCase = true) -> "StreamWish"
+                        else -> "Samehadaku Server ${streams.size + 1}"
                     }
                     streams.add(
                         StreamData(
@@ -110,8 +119,48 @@ class SamehadakuScraper : BaseScraper {
                     )
                 }
             }
+
+            // 2. Server selection dropdown / list
+            val serverOptions = doc.select("#select-server option, select.mirror option, .server-option option, .server-item a")
+            for (opt in serverOptions) {
+                val value = opt.attr("value").ifEmpty { opt.attr("abs:href") }
+                val label = opt.text().ifEmpty { "Server ${streams.size + 1}" }
+                if (value.startsWith("http") && addedUrls.add(value)) {
+                    streams.add(
+                        StreamData(
+                            serverName = "Samehadaku - $label",
+                            streamUrl = value,
+                            isIframe = true,
+                            resolution = StreamResolution.HD_720p,
+                            priority = ServerPriority.MEDIUM
+                        )
+                    )
+                }
+            }
+
+            // 3. Fallback Full Page Player
+            if (addedUrls.add(episodeUrl)) {
+                streams.add(
+                    StreamData(
+                        serverName = "Samehadaku Web Player (Full Page)",
+                        streamUrl = episodeUrl,
+                        isIframe = true,
+                        resolution = StreamResolution.HD_720p,
+                        priority = ServerPriority.LOW
+                    )
+                )
+            }
         } catch (e: Exception) {
             e.printStackTrace()
+            streams.add(
+                StreamData(
+                    serverName = "Samehadaku Web Player (Fallback)",
+                    streamUrl = episodeUrl,
+                    isIframe = true,
+                    resolution = StreamResolution.HD_720p,
+                    priority = ServerPriority.LOW
+                )
+            )
         }
         streams
     }

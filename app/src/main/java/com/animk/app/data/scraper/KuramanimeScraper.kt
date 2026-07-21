@@ -57,12 +57,12 @@ class KuramanimeScraper : BaseScraper {
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            val epElements = doc.select("#episodeLists a, .episode__list a")
+            val epElements = doc.select("#episodeLists a, .episode__list a, a[href*='/episode/']")
             var count = 1f
             for (el in epElements) {
                 val epUrl = el.attr("abs:href")
                 val epTitle = el.text().ifEmpty { "Episode $count" }
-                if (epUrl.isNotBlank()) {
+                if (epUrl.isNotBlank() && !episodes.any { it.sourceUrl == epUrl }) {
                     episodes.add(
                         Episode(
                             id = epUrl,
@@ -85,40 +85,102 @@ class KuramanimeScraper : BaseScraper {
 
     override suspend fun getStreams(episodeUrl: String): List<StreamData> = withContext(Dispatchers.IO) {
         val streams = mutableListOf<StreamData>()
+        val addedUrls = mutableSetOf<String>()
+
         try {
-            val request = Request.Builder().url(episodeUrl).build()
+            val request = Request.Builder()
+                .url(episodeUrl)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .build()
             val response = client.newCall(request).execute()
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            val iframeEl = doc.selectFirst("iframe[src]")
-            val videoEl = doc.selectFirst("video source[src]")
-
-            if (videoEl != null) {
-                val src = videoEl.attr("abs:src")
-                streams.add(
-                    StreamData(
-                        serverName = "KuramaDrive Direct",
-                        streamUrl = src,
-                        isIframe = false,
-                        resolution = StreamResolution.HD_1080p,
-                        priority = ServerPriority.HIGH
+            // 1. Direct Video Tags
+            val videoSources = doc.select("video source[src], video[src]")
+            for (v in videoSources) {
+                val src = v.attr("abs:src").ifEmpty { v.attr("src") }
+                if (src.isNotBlank() && addedUrls.add(src)) {
+                    streams.add(
+                        StreamData(
+                            serverName = "Kurama Direct HD",
+                            streamUrl = src,
+                            isIframe = false,
+                            resolution = StreamResolution.HD_1080p,
+                            priority = ServerPriority.HIGH
+                        )
                     )
-                )
-            } else if (iframeEl != null) {
-                val src = iframeEl.attr("abs:src")
+                }
+            }
+
+            // 2. Extract All Iframes (src & data-src)
+            val iframes = doc.select("iframe[src], iframe[data-src], #player iframe, .player iframe")
+            for (iframe in iframes) {
+                val src = iframe.attr("abs:src").ifEmpty { iframe.attr("abs:data-src") }
+                    .ifEmpty { iframe.attr("src") }
+                if (src.isNotBlank() && !src.startsWith("about:") && addedUrls.add(src)) {
+                    val serverLabel = when {
+                        src.contains("kurama", ignoreCase = true) -> "KuramaDrive Fast"
+                        src.contains("beda", ignoreCase = true) -> "BedaDrive HD"
+                        src.contains("archive", ignoreCase = true) -> "Archive Server"
+                        src.contains("dood", ignoreCase = true) -> "Doodstream"
+                        src.contains("streamwish", ignoreCase = true) -> "StreamWish"
+                        else -> "Kurama Server ${streams.size + 1}"
+                    }
+                    streams.add(
+                        StreamData(
+                            serverName = serverLabel,
+                            streamUrl = src,
+                            isIframe = true,
+                            resolution = StreamResolution.HD_720p,
+                            priority = ServerPriority.HIGH
+                        )
+                    )
+                }
+            }
+
+            // 3. Extract Server Select options & buttons
+            val serverOptions = doc.select("select#server option, select.server-list option, #change-server option, a.server-link, [data-stream]")
+            for (opt in serverOptions) {
+                val value = opt.attr("value").ifEmpty { opt.attr("data-stream") }.ifEmpty { opt.attr("abs:href") }
+                val name = opt.text().ifEmpty { "Server ${streams.size + 1}" }
+                if (value.startsWith("http") && addedUrls.add(value)) {
+                    streams.add(
+                        StreamData(
+                            serverName = "Kurama - $name",
+                            streamUrl = value,
+                            isIframe = true,
+                            resolution = StreamResolution.HD_720p,
+                            priority = ServerPriority.MEDIUM
+                        )
+                    )
+                }
+            }
+
+            // 4. Guaranteed Fallback: Direct Web Player (Episode Page)
+            if (addedUrls.add(episodeUrl)) {
                 streams.add(
                     StreamData(
-                        serverName = "KuramaDrive Stream",
-                        streamUrl = src,
+                        serverName = "Kuramanime Web Player (Full Page)",
+                        streamUrl = episodeUrl,
                         isIframe = true,
                         resolution = StreamResolution.HD_720p,
-                        priority = ServerPriority.HIGH
+                        priority = ServerPriority.LOW
                     )
                 )
             }
         } catch (e: Exception) {
             e.printStackTrace()
+            // Fallback on error
+            streams.add(
+                StreamData(
+                    serverName = "Kuramanime Web Player (Fallback)",
+                    streamUrl = episodeUrl,
+                    isIframe = true,
+                    resolution = StreamResolution.HD_720p,
+                    priority = ServerPriority.LOW
+                )
+            )
         }
         streams
     }

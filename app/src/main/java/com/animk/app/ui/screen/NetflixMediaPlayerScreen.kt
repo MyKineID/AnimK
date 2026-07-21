@@ -62,10 +62,10 @@ fun NetflixMediaPlayerScreen(
     var activeStream by remember { mutableStateOf<StreamData?>(null) }
     var isFetchingStreams by remember { mutableStateOf(true) }
 
-    LaunchedEffect(episodeSourceUrl) {
+    LaunchedEffect(episodeSourceUrl, media.title) {
         scope.launch {
             isFetchingStreams = true
-            val streams = scraperRepository.fetchStreamsForEpisode(episodeSourceUrl)
+            val streams = scraperRepository.fetchStreamsForEpisode(episodeSourceUrl, media.title)
             availableStreams = streams
             activeStream = streams.firstOrNull()
             isFetchingStreams = false
@@ -125,13 +125,14 @@ fun NetflixMediaPlayerScreen(
 
     LaunchedEffect(isControlsVisible, isLocked) {
         if (isControlsVisible && !isLocked) {
-            delay(4000)
+            delay(5000)
             isControlsVisible = false
         }
     }
 
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
-    
+    var lastLoadedUrl by remember { mutableStateOf("") }
+
     LaunchedEffect(playbackSpeed) {
         webViewRef?.evaluateJavascript("if (document.querySelector('video')) { document.querySelector('video').playbackRate = $playbackSpeed; }", null)
     }
@@ -218,17 +219,20 @@ fun NetflixMediaPlayerScreen(
                     )
                 }
         ) {
-    var lastLoadedUrl by remember { mutableStateOf("") }
-
-    // WebView Video Player
+            // WebView Video Player
             AndroidView(
                 factory = { ctx ->
                     WebView(ctx).apply {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
+                        settings.databaseEnabled = true
+                        settings.useWideViewPort = true
+                        settings.loadWithOverviewMode = true
+                        settings.javaScriptCanOpenWindowsAutomatically = true
                         settings.mediaPlaybackRequiresUserGesture = false
                         settings.allowContentAccess = true
                         settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                        settings.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
                         webChromeClient = WebChromeClient()
                         webViewClient = WebViewClient()
                         webViewRef = this
@@ -239,13 +243,40 @@ fun NetflixMediaPlayerScreen(
                         if (stream.streamUrl != lastLoadedUrl) {
                             lastLoadedUrl = stream.streamUrl
                             if (stream.isIframe) {
-                                webView.loadUrl(stream.streamUrl)
+                                if (stream.streamUrl.startsWith("http")) {
+                                    val html = """
+                                        <!DOCTYPE html>
+                                        <html>
+                                        <head>
+                                            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+                                            <style>
+                                                html, body { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #000; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+                                                iframe { width: 100%; height: 100%; border: none; }
+                                            </style>
+                                        </head>
+                                        <body>
+                                            <iframe src="${stream.streamUrl}" allowfullscreen="true" allow="autoplay; fullscreen; picture-in-picture"></iframe>
+                                        </body>
+                                        </html>
+                                    """.trimIndent()
+                                    webView.loadDataWithBaseURL(stream.streamUrl, html, "text/html", "UTF-8", null)
+                                } else {
+                                    webView.loadUrl(stream.streamUrl)
+                                }
                             } else {
                                 val html = """
-                                    <html><body style="margin:0;padding:0;background:#000">
-                                    <video width="100%" height="100%" autoplay controls style="object-fit:contain">
-                                    <source src="${stream.streamUrl}" type="video/mp4">
-                                    </video></body></html>
+                                    <!DOCTYPE html>
+                                    <html>
+                                    <head>
+                                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                                        <style>html, body { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #000; }</style>
+                                    </head>
+                                    <body>
+                                        <video width="100%" height="100%" autoplay controls style="object-fit:contain">
+                                            <source src="${stream.streamUrl}" type="video/mp4">
+                                        </video>
+                                    </body>
+                                    </html>
                                 """.trimIndent()
                                 webView.loadData(html, "text/html", "UTF-8")
                             }
@@ -261,14 +292,23 @@ fun NetflixMediaPlayerScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    CircularProgressIndicator(color = custom.primary)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(color = custom.primary)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("Gathering servers from all providers...", color = Color.White, fontSize = 13.sp)
+                    }
                 }
             } else if (availableStreams.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("No streams found", color = Color.White)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Filled.Warning, contentDescription = null, tint = Color.Yellow, modifier = Modifier.size(36.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("No active stream servers found", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text("Tap back and try selecting another episode", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                    }
                 }
             }
 
@@ -281,7 +321,7 @@ fun NetflixMediaPlayerScreen(
                         .align(Alignment.TopCenter)
                         .background(
                             Brush.verticalGradient(
-                                colors = listOf(Color.Black.copy(alpha = 0.8f), Color.Transparent)
+                                colors = listOf(Color.Black.copy(alpha = 0.85f), Color.Transparent)
                             )
                         )
                 )
@@ -292,7 +332,7 @@ fun NetflixMediaPlayerScreen(
                         .align(Alignment.BottomCenter)
                         .background(
                             Brush.verticalGradient(
-                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.8f))
+                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))
                             )
                         )
                 )
@@ -307,98 +347,97 @@ fun NetflixMediaPlayerScreen(
                     contentAlignment = Alignment.TopCenter
                 ) {
                     Surface(
-                        color = custom.primary.copy(alpha = 0.85f),
+                        color = Color.Black.copy(alpha = 0.75f),
                         shape = RoundedCornerShape(20.dp)
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Filled.FastForward, contentDescription = null, tint = custom.onPrimary, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Filled.FastForward, contentDescription = null, tint = custom.primary, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "2X Speed Active",
-                                color = custom.onPrimary,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
-                            )
+                            Text("2x Speeding", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
                     }
                 }
             }
 
-            // Double Tap Badges
-            if (showLeftDoubleTapBadge) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .padding(start = 48.dp)
-                        .size(90.dp)
-                        .background(Color.Black.copy(alpha = 0.45f), CircleShape),
-                    contentAlignment = Alignment.Center
+            // Double Tap Left Feedback (-10s)
+            AnimatedVisibility(
+                visible = showLeftDoubleTapBadge,
+                enter = fadeIn() + scaleIn(),
+                exit = fadeOut() + scaleOut(),
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 48.dp)
+            ) {
+                Surface(
+                    color = Color.Black.copy(alpha = 0.75f),
+                    shape = CircleShape,
+                    modifier = Modifier.size(70.dp)
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Filled.FastRewind, contentDescription = null, tint = Color.White, modifier = Modifier.size(32.dp))
-                        Text("-10s", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(Icons.Filled.Replay10, contentDescription = "-10s", tint = custom.primary)
+                        Text("-10s", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
 
-            if (showRightDoubleTapBadge) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 48.dp)
-                        .size(90.dp)
-                        .background(Color.Black.copy(alpha = 0.45f), CircleShape),
-                    contentAlignment = Alignment.Center
+            // Double Tap Right Feedback (+10s)
+            AnimatedVisibility(
+                visible = showRightDoubleTapBadge,
+                enter = fadeIn() + scaleIn(),
+                exit = fadeOut() + scaleOut(),
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 48.dp)
+            ) {
+                Surface(
+                    color = Color.Black.copy(alpha = 0.75f),
+                    shape = CircleShape,
+                    modifier = Modifier.size(70.dp)
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Filled.FastForward, contentDescription = null, tint = Color.White, modifier = Modifier.size(32.dp))
-                        Text("+10s", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(Icons.Filled.Forward10, contentDescription = "+10s", tint = custom.primary)
+                        Text("+10s", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
 
-            // Floating Lock Button when Locked
-            if (isLocked) {
+            // Locked Screen Floating Unlock Button
+            if (isLocked && isControlsVisible) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(24.dp),
-                    contentAlignment = Alignment.TopStart
+                    contentAlignment = Alignment.TopEnd
                 ) {
                     IconButton(
                         onClick = { isLocked = false },
-                        modifier = Modifier
-                            .size(48.dp)
-                            .background(Color.Black.copy(alpha = 0.4f), CircleShape)
+                        modifier = Modifier.background(custom.primary.copy(alpha = 0.85f), CircleShape)
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.Lock,
-                            contentDescription = "Unlock Screen",
-                            tint = custom.primary,
-                            modifier = Modifier.size(26.dp)
-                        )
+                        Icon(Icons.Filled.Lock, contentDescription = "Unlock", tint = custom.onPrimary)
                     }
                 }
             }
 
-            // Animated Controls Overlay
-            AnimatedVisibility(
-                visible = isControlsVisible && !isLocked,
-                enter = fadeIn(),
-                exit = fadeOut(),
-                modifier = Modifier.fillMaxSize()
-            ) {
+            // Overlay Controls
+            if (isControlsVisible && !isLocked) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     // Top Bar
                     Row(
                         modifier = Modifier
+                            .align(Alignment.TopCenter)
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = onBack) {
@@ -436,9 +475,13 @@ fun NetflixMediaPlayerScreen(
                         ) {
                             Row {
                                 TextButton(onClick = { showServerSheet = true }) {
-                                    Icon(Icons.Filled.Dns, contentDescription = "Server", tint = custom.primary.copy(alpha = 0.8f))
+                                    Icon(Icons.Filled.Dns, contentDescription = "Server", tint = custom.primary)
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text(activeStream?.serverName ?: "Select Server", color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Bold)
+                                    Text(activeStream?.serverName ?: "Select Server", color = Color.White, fontWeight = FontWeight.Bold)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Surface(color = custom.primary.copy(alpha = 0.2f), shape = RoundedCornerShape(4.dp)) {
+                                        Text("${availableStreams.size} Servers", color = custom.primary, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                                    }
                                 }
                                 
                                 Spacer(modifier = Modifier.width(8.dp))
@@ -498,34 +541,53 @@ fun NetflixMediaPlayerScreen(
         }
     }
     
-    // Server Selection Modal Sheet
+    // Multi-Server Selection Modal Sheet
     if (showServerSheet) {
         ModalBottomSheet(
             onDismissRequest = { showServerSheet = false },
             containerColor = custom.surface
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text("Select Server", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = custom.textPrimary)
-                Spacer(modifier = Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Dns, contentDescription = null, tint = custom.primary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Select Stream Server (${availableStreams.size})", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = custom.textPrimary)
+                }
+                Text("If a server shows a black screen, select another server from the list below.", fontSize = 12.sp, color = custom.textMuted, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
+                
                 availableStreams.forEach { stream ->
-                    Row(
+                    Surface(
+                        color = if (activeStream == stream) custom.primary.copy(alpha = 0.15f) else custom.cardSurface,
+                        shape = RoundedCornerShape(8.dp),
                         modifier = Modifier
                             .fillMaxWidth()
+                            .padding(vertical = 4.dp)
                             .clickable {
                                 activeStream = stream
                                 showServerSheet = false
                             }
-                            .padding(vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = stream.serverName,
-                            color = if (activeStream == stream) custom.primary else custom.textPrimary,
-                            fontWeight = if (activeStream == stream) FontWeight.Bold else FontWeight.Normal
-                        )
-                        if (activeStream == stream) {
-                            Icon(Icons.Filled.Check, contentDescription = null, tint = custom.primary)
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = stream.serverName,
+                                    color = if (activeStream == stream) custom.primary else custom.textPrimary,
+                                    fontWeight = if (activeStream == stream) FontWeight.Bold else FontWeight.Medium,
+                                    fontSize = 14.sp
+                                )
+                                Text(
+                                    text = if (stream.isIframe) "Embed Stream" else "Direct MP4 Stream",
+                                    color = custom.textMuted,
+                                    fontSize = 11.sp
+                                )
+                            }
+                            if (activeStream == stream) {
+                                Icon(Icons.Filled.Check, contentDescription = null, tint = custom.primary)
+                            }
                         }
                     }
                 }

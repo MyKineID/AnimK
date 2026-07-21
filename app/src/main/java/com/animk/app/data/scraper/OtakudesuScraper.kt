@@ -22,12 +22,12 @@ class OtakudesuScraper : BaseScraper {
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            val items = doc.select(".chivsrc, ul.chseries li")
+            val items = doc.select("ul.chlist li, ul.chibi li")
             for (element in items) {
                 val linkEl = element.selectFirst("a[href]")
                 val mediaUrl = linkEl?.attr("abs:href") ?: ""
-                val title = element.select("h2, a").text()
-                val posterUrl = element.select("img").attr("abs:src")
+                val title = element.select("a").text()
+                val posterUrl = element.select("img").attr("src")
 
                 if (title.isNotBlank() && mediaUrl.isNotBlank()) {
                     list.add(
@@ -37,7 +37,8 @@ class OtakudesuScraper : BaseScraper {
                             type = MediaType.ANIME,
                             posterUrl = posterUrl.ifEmpty { "https://picsum.photos/300/450" },
                             backdropUrl = posterUrl,
-                            description = "Otakudesu anime source"
+                            description = "Otakudesu stream source",
+                            genres = listOf("Action", "Anime")
                         )
                     )
                 }
@@ -56,12 +57,12 @@ class OtakudesuScraper : BaseScraper {
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            val epElements = doc.select(".episodelist ul li a")
+            val epElements = doc.select("ul li a[href*='/episode/']")
             var count = 1f
             for (el in epElements) {
                 val epUrl = el.attr("abs:href")
-                val epTitle = el.text()
-                if (epUrl.isNotBlank() && epUrl.contains("/episode/")) {
+                val epTitle = el.text().ifEmpty { "Episode $count" }
+                if (epUrl.isNotBlank() && !episodes.any { it.sourceUrl == epUrl }) {
                     episodes.add(
                         Episode(
                             id = epUrl,
@@ -84,27 +85,34 @@ class OtakudesuScraper : BaseScraper {
 
     override suspend fun getStreams(episodeUrl: String): List<StreamData> = withContext(Dispatchers.IO) {
         val streams = mutableListOf<StreamData>()
+        val addedUrls = mutableSetOf<String>()
+
         try {
-            val request = Request.Builder().url(episodeUrl).build()
+            val request = Request.Builder()
+                .url(episodeUrl)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .build()
             val response = client.newCall(request).execute()
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
+            // 1. Base64 Decoded Stream Elements
             val elements = doc.select("[data-content]")
             for (el in elements) {
                 val base64Content = el.attr("data-content")
+                val serverName = el.text().ifEmpty { "OtakuStream ${streams.size + 1}" }
                 if (base64Content.isNotBlank()) {
                     try {
                         val decodedBytes = Base64.decode(base64Content, Base64.DEFAULT)
                         val decodedUrl = String(decodedBytes, Charsets.UTF_8)
-                        if (decodedUrl.startsWith("http")) {
+                        if (decodedUrl.startsWith("http") && addedUrls.add(decodedUrl)) {
                             streams.add(
                                 StreamData(
-                                    serverName = "OtakuStream Direct",
+                                    serverName = serverName,
                                     streamUrl = decodedUrl,
-                                    isIframe = decodedUrl.contains("<iframe"),
+                                    isIframe = decodedUrl.contains("<iframe") || !decodedUrl.endsWith(".mp4"),
                                     resolution = StreamResolution.HD_720p,
-                                    priority = ServerPriority.MEDIUM
+                                    priority = ServerPriority.HIGH
                                 )
                             )
                         }
@@ -114,23 +122,46 @@ class OtakudesuScraper : BaseScraper {
                 }
             }
 
-            if (streams.isEmpty()) {
-                val iframe = doc.selectFirst("iframe[src]")
-                if (iframe != null) {
-                    val src = iframe.attr("abs:src")
+            // 2. Direct Iframes
+            val iframes = doc.select("iframe[src], iframe[data-src], #embed_holder iframe")
+            for (iframe in iframes) {
+                val src = iframe.attr("abs:src").ifEmpty { iframe.attr("abs:data-src") }
+                if (src.isNotBlank() && !src.startsWith("about:") && addedUrls.add(src)) {
                     streams.add(
                         StreamData(
-                            serverName = "Otakudesu Mirror",
+                            serverName = "Otaku Mirror ${streams.size + 1}",
                             streamUrl = src,
                             isIframe = true,
                             resolution = StreamResolution.SD_480p,
-                            priority = ServerPriority.LOW
+                            priority = ServerPriority.MEDIUM
                         )
                     )
                 }
             }
+
+            // 3. Fallback Full Page Player
+            if (addedUrls.add(episodeUrl)) {
+                streams.add(
+                    StreamData(
+                        serverName = "Otakudesu Web Player (Full Page)",
+                        streamUrl = episodeUrl,
+                        isIframe = true,
+                        resolution = StreamResolution.SD_480p,
+                        priority = ServerPriority.LOW
+                    )
+                )
+            }
         } catch (e: Exception) {
             e.printStackTrace()
+            streams.add(
+                StreamData(
+                    serverName = "Otakudesu Web Player (Fallback)",
+                    streamUrl = episodeUrl,
+                    isIframe = true,
+                    resolution = StreamResolution.SD_480p,
+                    priority = ServerPriority.LOW
+                )
+            )
         }
         streams
     }
