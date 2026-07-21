@@ -54,3 +54,22 @@ jobs:
           path: build-log.txt
           retention-days: 7
           if-no-files-found: ignore
+
+      # ─── Kirim APK ke Telegram ────────────────────────────────
+      - name: Send APK to Telegram
+        if: success()
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        shell: bash
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+          if [ ! -f "$APK" ]; then
+            echo "APK not found at $APK"
+            exit 1
+          fi
+          COMMIT_MSG="$(git log -1 --pretty=format:%s)"
+          curl -F "chat_id=${CHAT_ID}" \
+               -F "document=@${APK}" \
+               -F "caption=✅ *AnimK Build Succeed!*%0A%0A📦 Version: $(git rev-parse --short HEAD)%0A📝 Commit: ${COMMIT_MSG}%0A🌿 Branch: ${GITHUB_REF_NAME}%0A💼 Size: $(du -h ${APK} | cut -f1)" \
+               "https://api.telegram.org/bot${TOKEN}/sendDocument
