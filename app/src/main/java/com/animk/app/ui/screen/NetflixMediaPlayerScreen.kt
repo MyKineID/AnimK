@@ -1,9 +1,12 @@
 package com.animk.app.ui.screen
 
 import android.content.pm.ActivityInfo
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.compose.animation.*
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -30,13 +33,14 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import coil3.compose.AsyncImage
 import com.animk.app.data.model.MediaItem
 import com.animk.app.data.model.StreamData
-import com.animk.app.data.scraper.AnimeOrchestrator
+import com.animk.app.data.repository.ScraperRepository
 import com.animk.app.ui.theme.LocalCustomColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -45,6 +49,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun NetflixMediaPlayerScreen(
     media: MediaItem,
+    episodeSourceUrl: String,
     onBack: () -> Unit
 ) {
     val custom = LocalCustomColors.current
@@ -52,14 +57,15 @@ fun NetflixMediaPlayerScreen(
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
 
-    val orchestrator = remember { AnimeOrchestrator() }
+    val scraperRepository = remember { ScraperRepository() }
     var availableStreams by remember { mutableStateOf<List<StreamData>>(emptyList()) }
     var activeStream by remember { mutableStateOf<StreamData?>(null) }
     var isFetchingStreams by remember { mutableStateOf(true) }
 
-    LaunchedEffect(media.title) {
+    LaunchedEffect(episodeSourceUrl) {
         scope.launch {
-            val streams = orchestrator.getStreamsWaterfall(media.title)
+            isFetchingStreams = true
+            val streams = scraperRepository.fetchStreamsForEpisode(episodeSourceUrl)
             availableStreams = streams
             activeStream = streams.firstOrNull()
             isFetchingStreams = false
@@ -85,16 +91,13 @@ fun NetflixMediaPlayerScreen(
         }
     }
 
-    var isPlaying by remember { mutableStateOf(true) }
-    var currentPosition by remember { mutableFloatStateOf(120f) }
-    val totalDuration = 1440f
     var isControlsVisible by remember { mutableStateOf(true) }
     var isLocked by remember { mutableStateOf(false) }
-    var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
-    var is2xSpeedActive by remember { mutableStateOf(false) }
-    var aspectRatioMode by remember { mutableStateOf("Fit") }
     var showSpeedSheet by remember { mutableStateOf(false) }
     var showEpisodeSheet by remember { mutableStateOf(false) }
+    var showServerSheet by remember { mutableStateOf(false) }
+    var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
+    var is2xSpeedActive by remember { mutableStateOf(false) }
 
     // Double tap feedback overlays
     var showLeftDoubleTapBadge by remember { mutableStateOf(false) }
@@ -120,11 +123,22 @@ fun NetflixMediaPlayerScreen(
         }
     }
 
-    LaunchedEffect(isPlaying, isControlsVisible, isLocked) {
-        if (isPlaying && isControlsVisible && !isLocked) {
+    LaunchedEffect(isControlsVisible, isLocked) {
+        if (isControlsVisible && !isLocked) {
             delay(4000)
             isControlsVisible = false
         }
+    }
+
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    
+    LaunchedEffect(playbackSpeed) {
+        webViewRef?.evaluateJavascript("if (document.querySelector('video')) { document.querySelector('video').playbackRate = $playbackSpeed; }", null)
+    }
+
+    LaunchedEffect(is2xSpeedActive) {
+        val speed = if (is2xSpeedActive) 2.0f else playbackSpeed
+        webViewRef?.evaluateJavascript("if (document.querySelector('video')) { document.querySelector('video').playbackRate = $speed; }", null)
     }
 
     Box(
@@ -177,13 +191,13 @@ fun NetflixMediaPlayerScreen(
                             if (!isLocked) {
                                 val screenWidth = size.width
                                 if (offset.x < screenWidth / 2) {
-                                    currentPosition = (currentPosition - 10f).coerceAtLeast(0f)
                                     showLeftDoubleTapBadge = true
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    webViewRef?.evaluateJavascript("if (document.querySelector('video')) { document.querySelector('video').currentTime -= 10; }", null)
                                 } else {
-                                    currentPosition = (currentPosition + 10f).coerceAtMost(totalDuration)
                                     showRightDoubleTapBadge = true
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    webViewRef?.evaluateJavascript("if (document.querySelector('video')) { document.querySelector('video').currentTime += 10; }", null)
                                 }
                             }
                         },
@@ -204,17 +218,59 @@ fun NetflixMediaPlayerScreen(
                     )
                 }
         ) {
-            // Fullscreen Video Backdrop
-            AsyncImage(
-                model = media.backdropUrl ?: media.posterUrl,
-                contentDescription = media.title,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = when (aspectRatioMode) {
-                    "Fill" -> ContentScale.FillBounds
-                    "Zoom" -> ContentScale.Crop
-                    else -> ContentScale.Fit
-                }
+    var lastLoadedUrl by remember { mutableStateOf("") }
+
+    // WebView Video Player
+            AndroidView(
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.mediaPlaybackRequiresUserGesture = false
+                        settings.allowContentAccess = true
+                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                        webChromeClient = WebChromeClient()
+                        webViewClient = WebViewClient()
+                        webViewRef = this
+                    }
+                },
+                update = { webView ->
+                    activeStream?.let { stream ->
+                        if (stream.streamUrl != lastLoadedUrl) {
+                            lastLoadedUrl = stream.streamUrl
+                            if (stream.isIframe) {
+                                webView.loadUrl(stream.streamUrl)
+                            } else {
+                                val html = """
+                                    <html><body style="margin:0;padding:0;background:#000">
+                                    <video width="100%" height="100%" autoplay controls style="object-fit:contain">
+                                    <source src="${stream.streamUrl}" type="video/mp4">
+                                    </video></body></html>
+                                """.trimIndent()
+                                webView.loadData(html, "text/html", "UTF-8")
+                            }
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
             )
+
+            // Loading indicator
+            if (isFetchingStreams) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(color = custom.primary)
+                }
+            } else if (availableStreams.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("No streams found", color = Color.White)
+                }
+            }
 
             // Subtle gradient overlay when controls visible
             if (isControlsVisible && !isLocked) {
@@ -225,7 +281,7 @@ fun NetflixMediaPlayerScreen(
                         .align(Alignment.TopCenter)
                         .background(
                             Brush.verticalGradient(
-                                colors = listOf(Color.Black.copy(alpha = 0.6f), Color.Transparent)
+                                colors = listOf(Color.Black.copy(alpha = 0.8f), Color.Transparent)
                             )
                         )
                 )
@@ -236,7 +292,7 @@ fun NetflixMediaPlayerScreen(
                         .align(Alignment.BottomCenter)
                         .background(
                             Brush.verticalGradient(
-                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.7f))
+                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.8f))
                             )
                         )
                 )
@@ -353,88 +409,20 @@ fun NetflixMediaPlayerScreen(
                                 )
                             }
                             Spacer(modifier = Modifier.width(8.dp))
-                            Column {
-                                Text(
-                                    text = media.title,
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 16.sp
-                                )
-                                Text(
-                                    text = activeStream?.serverName ?: "Server: Auto Stream",
-                                    color = custom.primary,
-                                    fontSize = 12.sp
-                                )
-                            }
+                            Text(
+                                text = media.title,
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp
+                            )
                         }
 
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = { showSpeedSheet = true }) {
-                                Icon(Icons.Filled.Speed, contentDescription = "Speed", tint = Color.White.copy(alpha = 0.85f))
-                            }
-                            IconButton(onClick = {
-                                aspectRatioMode = when (aspectRatioMode) {
-                                    "Fit" -> "Fill"
-                                    "Fill" -> "Zoom"
-                                    else -> "Fit"
-                                }
-                            }) {
-                                Icon(Icons.Filled.AspectRatio, contentDescription = "Aspect Ratio", tint = Color.White.copy(alpha = 0.85f))
-                            }
+                        IconButton(onClick = { isLocked = true }) {
+                            Icon(Icons.Filled.LockOpen, contentDescription = "Lock Screen", tint = Color.White.copy(alpha = 0.85f))
                         }
                     }
 
-                    // Center Playback Controls
-                    Row(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(
-                            onClick = { currentPosition = (currentPosition - 10f).coerceAtLeast(0f) },
-                            modifier = Modifier
-                                .size(52.dp)
-                                .background(Color.Black.copy(alpha = 0.25f), CircleShape)
-                        ) {
-                            Icon(Icons.Filled.FastRewind, contentDescription = "Rewind 10s", tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(30.dp))
-                        }
-
-                        IconButton(
-                            onClick = { isPlaying = !isPlaying },
-                            modifier = Modifier
-                                .size(68.dp)
-                                .background(custom.primary.copy(alpha = 0.55f), CircleShape)
-                        ) {
-                            AnimatedContent(
-                                targetState = isPlaying,
-                                transitionSpec = {
-                                    (fadeIn(animationSpec = tween(200)) + scaleIn(initialScale = 0.8f))
-                                        .togetherWith(fadeOut(animationSpec = tween(200)) + scaleOut(targetScale = 0.8f))
-                                },
-                                label = "PlayPauseAnim"
-                            ) { playing ->
-                                Icon(
-                                    imageVector = if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                                    contentDescription = "Play/Pause",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(40.dp)
-                                )
-                            }
-                        }
-
-                        IconButton(
-                            onClick = { currentPosition = (currentPosition + 10f).coerceAtMost(totalDuration) },
-                            modifier = Modifier
-                                .size(52.dp)
-                                .background(Color.Black.copy(alpha = 0.25f), CircleShape)
-                        ) {
-                            Icon(Icons.Filled.FastForward, contentDescription = "Forward 10s", tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(30.dp))
-                        }
-                    }
-
-                    // Bottom Bar & Slider
+                    // Bottom Bar
                     Column(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -442,49 +430,24 @@ fun NetflixMediaPlayerScreen(
                             .padding(horizontal = 16.dp, vertical = 12.dp)
                     ) {
                         Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            val currentMinutes = (currentPosition / 60).toInt()
-                            val currentSecs = (currentPosition % 60).toInt()
-                            val totalMinutes = (totalDuration / 60).toInt()
-
-                            Text(
-                                text = String.format("%02d:%02d", currentMinutes, currentSecs),
-                                color = Color.White,
-                                fontSize = 12.sp
-                            )
-
-                            Slider(
-                                value = currentPosition,
-                                onValueChange = { currentPosition = it },
-                                valueRange = 0f..totalDuration,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(horizontal = 8.dp),
-                                colors = SliderDefaults.colors(
-                                    thumbColor = custom.primary,
-                                    activeTrackColor = custom.primary,
-                                    inactiveTrackColor = Color.White.copy(alpha = 0.25f)
-                                )
-                            )
-
-                            Text(
-                                text = String.format("%02d:00", totalMinutes),
-                                color = Color.White.copy(alpha = 0.6f),
-                                fontSize = 12.sp
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            IconButton(onClick = { isLocked = true }) {
-                                Icon(Icons.Filled.LockOpen, contentDescription = "Lock Screen", tint = Color.White.copy(alpha = 0.7f))
+                            Row {
+                                TextButton(onClick = { showServerSheet = true }) {
+                                    Icon(Icons.Filled.Dns, contentDescription = "Server", tint = custom.primary.copy(alpha = 0.8f))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(activeStream?.serverName ?: "Select Server", color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Bold)
+                                }
+                                
+                                Spacer(modifier = Modifier.width(8.dp))
+
+                                TextButton(onClick = { showSpeedSheet = true }) {
+                                    Icon(Icons.Filled.Speed, contentDescription = "Speed", tint = custom.primary.copy(alpha = 0.8f))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(if (playbackSpeed == 1.0f) "1.0x" else "${playbackSpeed}x", color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Bold)
+                                }
                             }
 
                             TextButton(onClick = { showEpisodeSheet = true }) {
@@ -530,7 +493,43 @@ fun NetflixMediaPlayerScreen(
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(32.dp))
+            }
+        }
+    }
+    
+    // Server Selection Modal Sheet
+    if (showServerSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showServerSheet = false },
+            containerColor = custom.surface
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Select Server", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = custom.textPrimary)
+                Spacer(modifier = Modifier.height(12.dp))
+                availableStreams.forEach { stream ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                activeStream = stream
+                                showServerSheet = false
+                            }
+                            .padding(vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = stream.serverName,
+                            color = if (activeStream == stream) custom.primary else custom.textPrimary,
+                            fontWeight = if (activeStream == stream) FontWeight.Bold else FontWeight.Normal
+                        )
+                        if (activeStream == stream) {
+                            Icon(Icons.Filled.Check, contentDescription = null, tint = custom.primary)
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(32.dp))
             }
         }
     }
@@ -560,7 +559,7 @@ fun NetflixMediaPlayerScreen(
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(32.dp))
             }
         }
     }

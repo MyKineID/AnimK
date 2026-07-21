@@ -14,6 +14,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.animk.app.data.model.Episode
 import com.animk.app.data.model.MediaItem
 import com.animk.app.ui.component.AuthSheet
 import com.animk.app.ui.component.MediaDetailSheet
@@ -43,7 +44,9 @@ fun MainScreen(
     val custom = LocalCustomColors.current
 
     var selectedMediaForDetail by remember { mutableStateOf<MediaItem?>(null) }
-    var selectedMediaForPlayer by remember { mutableStateOf<MediaItem?>(null) }
+    // Now we track both the media AND the episode source URL for the player
+    var playerMedia by remember { mutableStateOf<MediaItem?>(null) }
+    var playerEpisodeUrl by remember { mutableStateOf("") }
     var showAuthSheet by remember { mutableStateOf(false) }
 
     val myListState = remember { mutableStateListOf<MediaItem>() }
@@ -57,10 +60,17 @@ fun MainScreen(
         }
     }
 
-    if (selectedMediaForPlayer != null) {
+    if (playerMedia != null) {
         NetflixMediaPlayerScreen(
-            media = selectedMediaForPlayer!!,
-            onBack = { selectedMediaForPlayer = null }
+            media = playerMedia!!,
+            episodeSourceUrl = playerEpisodeUrl,
+            onBack = {
+                // Back from player → return to detail sheet (reopen it)
+                val backMedia = playerMedia
+                playerMedia = null
+                playerEpisodeUrl = ""
+                selectedMediaForDetail = backMedia
+            }
         )
     } else {
         Scaffold(
@@ -97,7 +107,11 @@ fun MainScreen(
             when (selectedTabIndex) {
                 0 -> HomeScreen(
                     onMediaClick = { selectedMediaForDetail = it },
-                    onPlayClick = { selectedMediaForPlayer = it },
+                    onPlayClick = {
+                        // Direct play from home → uses first episode, player will fetch
+                        playerMedia = it
+                        playerEpisodeUrl = it.id // fallback: use media URL as episode URL
+                    },
                     onToggleMyList = { toggleMyList(it) },
                     myList = myListState,
                     modifier = contentModifier
@@ -119,14 +133,16 @@ fun MainScreen(
                 )
             }
 
-            // Detail Sheet
+            // Detail Sheet - now passes Episode with real sourceUrl
             selectedMediaForDetail?.let { media ->
                 MediaDetailSheet(
                     media = media,
                     isInMyList = myListState.any { it.id == media.id },
                     onDismiss = { selectedMediaForDetail = null },
-                    onPlayClick = { mediaItem ->
-                        selectedMediaForPlayer = mediaItem
+                    onPlayEpisode = { mediaItem, episode ->
+                        playerMedia = mediaItem
+                        playerEpisodeUrl = episode.sourceUrl
+                        selectedMediaForDetail = null
                     },
                     onToggleMyList = { toggleMyList(it) },
                     onRequireLogin = { showAuthSheet = true }
