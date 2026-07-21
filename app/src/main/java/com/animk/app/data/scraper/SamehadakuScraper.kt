@@ -2,31 +2,38 @@ package com.animk.app.data.scraper
 
 import com.animk.app.data.model.*
 import com.animk.app.data.network.OkHttpClientBuilder
+import com.animk.app.data.remoteconfig.ProviderConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import org.jsoup.Jsoup
+import java.net.URLEncoder
 
 class SamehadakuScraper : BaseScraper {
     override val sourceName: String = "Samehadaku"
-    override val baseUrl: String = "https://v2.samehadaku.how"
+    override val sourceKey: String = "samehadaku"
     private val client = OkHttpClientBuilder.buildUnsafeClient()
 
-    override suspend fun search(query: String): List<MediaItem> = withContext(Dispatchers.IO) {
+    override suspend fun search(query: String, config: ProviderConfig): List<MediaItem> = withContext(Dispatchers.IO) {
         val list = mutableListOf<MediaItem>()
         try {
-            val url = "$baseUrl/?s=$query"
+            val url = config.domain.trimEnd('/') + config.searchPath + URLEncoder.encode(query, "UTF-8")
             val request = Request.Builder().url(url).build()
             val response = client.newCall(request).execute()
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            val items = doc.select("article.animposx, div.animposx")
+            val selList = config.selectors.list.ifEmpty { "article.animposx, div.animposx" }
+            val selTitle = config.selectors.title.ifEmpty { ".title, h2" }
+            val selLink = config.selectors.link.ifEmpty { "a[href]" }
+            val selImage = config.selectors.image.ifEmpty { "img" }
+
+            val items = doc.select(selList)
             for (element in items) {
-                val linkEl = element.selectFirst("a[href]")
+                val linkEl = element.selectFirst(selLink)
                 val mediaUrl = linkEl?.attr("abs:href") ?: ""
-                val title = element.select(".title, h2").text()
-                val posterUrl = element.select("img").attr("src")
+                val title = element.select(selTitle).text()
+                val posterUrl = element.select(selImage).attr("src")
 
                 if (title.isNotBlank() && mediaUrl.isNotBlank()) {
                     list.add(
@@ -48,7 +55,7 @@ class SamehadakuScraper : BaseScraper {
         list
     }
 
-    override suspend fun getEpisodes(mediaUrl: String): List<Episode> = withContext(Dispatchers.IO) {
+    override suspend fun getEpisodes(mediaUrl: String, config: ProviderConfig): List<Episode> = withContext(Dispatchers.IO) {
         val episodes = mutableListOf<Episode>()
         try {
             val request = Request.Builder().url(mediaUrl).build()
@@ -56,7 +63,8 @@ class SamehadakuScraper : BaseScraper {
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            val epElements = doc.select(".lepisodes ul li a, .epsselect option, a[href*='/episode/']")
+            val epSelector = config.selectors.episodeLink.ifEmpty { ".lepisodes ul li a, .epsselect option, a[href*='/episode/']" }
+            val epElements = doc.select(epSelector)
             var count = 1f
             for (el in epElements) {
                 val epUrl = el.attr("abs:href").ifEmpty { el.attr("value") }
@@ -82,7 +90,7 @@ class SamehadakuScraper : BaseScraper {
         episodes
     }
 
-    override suspend fun getStreams(episodeUrl: String): List<StreamData> = withContext(Dispatchers.IO) {
+    override suspend fun getStreams(episodeUrl: String, config: ProviderConfig): List<StreamData> = withContext(Dispatchers.IO) {
         val streams = mutableListOf<StreamData>()
         val addedUrls = mutableSetOf<String>()
 
@@ -95,8 +103,8 @@ class SamehadakuScraper : BaseScraper {
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            // 1. Iframes
-            val iframes = doc.select("iframe[src], iframe[data-src], #embed_holder iframe")
+            val iframeSel = config.selectors.streamIframe.ifEmpty { "iframe[src], iframe[data-src], #embed_holder iframe" }
+            val iframes = doc.select(iframeSel)
             for (iframe in iframes) {
                 val src = iframe.attr("abs:src").ifEmpty { iframe.attr("abs:data-src") }
                 if (src.isNotBlank() && !src.startsWith("about:") && addedUrls.add(src)) {
@@ -120,7 +128,6 @@ class SamehadakuScraper : BaseScraper {
                 }
             }
 
-            // 2. Server selection dropdown / list
             val serverOptions = doc.select("#select-server option, select.mirror option, .server-option option, .server-item a")
             for (opt in serverOptions) {
                 val value = opt.attr("value").ifEmpty { opt.attr("abs:href") }
@@ -138,7 +145,6 @@ class SamehadakuScraper : BaseScraper {
                 }
             }
 
-            // 3. Fallback Full Page Player
             if (addedUrls.add(episodeUrl)) {
                 streams.add(
                     StreamData(

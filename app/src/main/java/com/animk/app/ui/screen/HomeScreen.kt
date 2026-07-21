@@ -17,9 +17,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.animk.app.data.model.MediaItem
+import com.animk.app.data.model.MediaType
 import com.animk.app.data.network.AniListApiService
-import com.animk.app.data.scraper.DonghuaScraper
-import com.animk.app.data.scraper.DrakorScraper
+import com.animk.app.data.repository.ScraperRepository
 import com.animk.app.ui.component.HeroBanner
 import com.animk.app.ui.component.MediaRow
 import com.animk.app.ui.theme.LocalCustomColors
@@ -37,8 +37,7 @@ fun HomeScreen(
     val scope = rememberCoroutineScope()
 
     val aniListService = remember { AniListApiService() }
-    val donghuaScraper = remember { DonghuaScraper() }
-    val drakorScraper = remember { DrakorScraper() }
+    val scraperRepo = remember { ScraperRepository() }
 
     var trendingAnime by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     var popularAnime by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
@@ -51,8 +50,8 @@ fun HomeScreen(
             try {
                 trendingAnime = aniListService.getTrendingAnime(page = 1, perPage = 6)
                 popularAnime = aniListService.searchAnime("Naruto")
-                donghuaList = donghuaScraper.search("BTTH")
-                drakorList = drakorScraper.search("Love")
+                donghuaList = scraperRepo.searchByType("BTTH", MediaType.DONGHUA)
+                drakorList = scraperRepo.searchByType("Love", MediaType.DRAKOR)
             } catch (e: Exception) {
                 e.printStackTrace()
             } finally {
@@ -141,11 +140,11 @@ fun HomeScreen(
                 }
             }
 
-            // 3D Donghua Section
+            // 3D Donghua Section (from remote config)
             item {
                 if (donghuaList.isNotEmpty()) {
                     MediaRow(
-                        title = "3D Donghua (Anichin)",
+                        title = "3D Donghua",
                         icon = Icons.Filled.FlashOn,
                         items = donghuaList,
                         onMediaClick = onMediaClick
@@ -153,11 +152,11 @@ fun HomeScreen(
                 }
             }
 
-            // Korean Drama Section
+            // Korean Drama Section (from remote config)
             item {
                 if (drakorList.isNotEmpty()) {
                     MediaRow(
-                        title = "Korean Drama (JuraganFilm)",
+                        title = "Korean Drama",
                         icon = Icons.Filled.Favorite,
                         items = drakorList,
                         onMediaClick = onMediaClick

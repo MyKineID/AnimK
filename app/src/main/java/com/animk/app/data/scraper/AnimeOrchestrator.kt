@@ -1,24 +1,27 @@
 package com.animk.app.data.scraper
 
 import com.animk.app.data.model.StreamData
+import com.animk.app.data.remoteconfig.DirectorConfigProvider
 
-class AnimeOrchestrator(
-    private val kurama: BaseScraper = KuramanimeScraper(),
-    private val samehadaku: BaseScraper = SamehadakuScraper(),
-    private val otakudesu: BaseScraper = OtakudesuScraper(),
-    private val donghua: BaseScraper = DonghuaScraper(),
-    private val drakor: BaseScraper = DrakorScraper()
-) {
+/**
+ * Waterfall stream resolver.
+ * Given an episode page URL, tries each active provider (from remote config)
+ * in priority order until one returns streams.
+ * No hardcoded domains or selectors.
+ */
+class AnimeOrchestrator {
+
     /**
-     * Given an actual episode page URL (not a title!), try each scraper's getStreams()
-     * in waterfall priority order until one returns results.
+     * Given an actual episode page URL (not a title!), try each active provider's
+     * getStreams() in priority order until one returns results.
      */
     suspend fun getStreamsWaterfall(episodeUrl: String): List<StreamData> {
-        val scrapers = listOf(kurama, samehadaku, otakudesu, donghua, drakor)
+        val activeProviders = DirectorConfigProvider.getActiveProviders()
 
-        for (scraper in scrapers) {
+        for ((key, config) in activeProviders) {
+            val scraper = SourceRegistry.getSource(key) ?: continue
             try {
-                val streams = scraper.getStreams(episodeUrl)
+                val streams = scraper.getStreams(episodeUrl, config)
                 if (streams.isNotEmpty()) return streams
             } catch (e: Exception) {
                 e.printStackTrace()

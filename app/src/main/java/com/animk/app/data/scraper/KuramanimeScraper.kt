@@ -2,31 +2,39 @@ package com.animk.app.data.scraper
 
 import com.animk.app.data.model.*
 import com.animk.app.data.network.OkHttpClientBuilder
+import com.animk.app.data.remoteconfig.ProviderConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import org.jsoup.Jsoup
+import java.net.URLEncoder
 
 class KuramanimeScraper : BaseScraper {
     override val sourceName: String = "Kuramanime"
-    override val baseUrl: String = "https://kuramanime.vip"
+    override val sourceKey: String = "kuramanime"
     private val client = OkHttpClientBuilder.buildUnsafeClient()
 
-    override suspend fun search(query: String): List<MediaItem> = withContext(Dispatchers.IO) {
+    override suspend fun search(query: String, config: ProviderConfig): List<MediaItem> = withContext(Dispatchers.IO) {
         val list = mutableListOf<MediaItem>()
         try {
-            val url = "$baseUrl/anime?search=$query&order_by=popular"
+            val searchPath = config.searchPath.ifEmpty { "/anime?search=" }
+            val url = config.domain.trimEnd('/') + searchPath + URLEncoder.encode(query, "UTF-8")
             val request = Request.Builder().url(url).build()
             val response = client.newCall(request).execute()
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            val items = doc.select(".product__item")
+            val selList = config.selectors.list.ifEmpty { ".product__item" }
+            val selTitle = config.selectors.title.ifEmpty { ".product__item__text h5, .product__item__text a" }
+            val selLink = config.selectors.link.ifEmpty { "a[href]" }
+            val selImage = config.selectors.image.ifEmpty { ".product__item__pic" }
+
+            val items = doc.select(selList)
             for (element in items) {
-                val linkEl = element.selectFirst("a[href]")
+                val linkEl = element.selectFirst(selLink)
                 val mediaUrl = linkEl?.attr("abs:href") ?: ""
-                val title = element.select(".product__item__text h5, .product__item__text a").text()
-                val posterUrl = element.select(".product__item__pic").attr("data-setbg")
+                val title = element.select(selTitle).text()
+                val posterUrl = element.select(selImage).attr("data-setbg")
                     .ifEmpty { element.select("img").attr("src") }
 
                 if (title.isNotBlank() && mediaUrl.isNotBlank()) {
@@ -49,7 +57,7 @@ class KuramanimeScraper : BaseScraper {
         list
     }
 
-    override suspend fun getEpisodes(mediaUrl: String): List<Episode> = withContext(Dispatchers.IO) {
+    override suspend fun getEpisodes(mediaUrl: String, config: ProviderConfig): List<Episode> = withContext(Dispatchers.IO) {
         val episodes = mutableListOf<Episode>()
         try {
             val request = Request.Builder().url(mediaUrl).build()
@@ -57,7 +65,8 @@ class KuramanimeScraper : BaseScraper {
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            val epElements = doc.select("#episodeLists a, .episode__list a, a[href*='/episode/']")
+            val epSelector = config.selectors.episodeLink.ifEmpty { "#episodeLists a, .episode__list a, a[href*='/episode/']" }
+            val epElements = doc.select(epSelector)
             var count = 1f
             for (el in epElements) {
                 val epUrl = el.attr("abs:href")
@@ -83,7 +92,7 @@ class KuramanimeScraper : BaseScraper {
         episodes
     }
 
-    override suspend fun getStreams(episodeUrl: String): List<StreamData> = withContext(Dispatchers.IO) {
+    override suspend fun getStreams(episodeUrl: String, config: ProviderConfig): List<StreamData> = withContext(Dispatchers.IO) {
         val streams = mutableListOf<StreamData>()
         val addedUrls = mutableSetOf<String>()
 
@@ -97,7 +106,8 @@ class KuramanimeScraper : BaseScraper {
             val doc = Jsoup.parse(html)
 
             // 1. Direct Video Tags
-            val videoSources = doc.select("video source[src], video[src]")
+            val videoSel = config.selectors.streamVideo.ifEmpty { "video source[src], video[src]" }
+            val videoSources = doc.select(videoSel)
             for (v in videoSources) {
                 val src = v.attr("abs:src").ifEmpty { v.attr("src") }
                 if (src.isNotBlank() && addedUrls.add(src)) {
@@ -113,8 +123,9 @@ class KuramanimeScraper : BaseScraper {
                 }
             }
 
-            // 2. Extract All Iframes (src & data-src)
-            val iframes = doc.select("iframe[src], iframe[data-src], #player iframe, .player iframe")
+            // 2. Extract All Iframes
+            val iframeSel = config.selectors.streamIframe.ifEmpty { "iframe[src], iframe[data-src], #player iframe, .player iframe" }
+            val iframes = doc.select(iframeSel)
             for (iframe in iframes) {
                 val src = iframe.attr("abs:src").ifEmpty { iframe.attr("abs:data-src") }
                     .ifEmpty { iframe.attr("src") }
@@ -157,7 +168,7 @@ class KuramanimeScraper : BaseScraper {
                 }
             }
 
-            // 4. Guaranteed Fallback: Direct Web Player (Episode Page)
+            // 4. Guaranteed Fallback: Direct Web Player
             if (addedUrls.add(episodeUrl)) {
                 streams.add(
                     StreamData(
@@ -171,7 +182,6 @@ class KuramanimeScraper : BaseScraper {
             }
         } catch (e: Exception) {
             e.printStackTrace()
-            // Fallback on error
             streams.add(
                 StreamData(
                     serverName = "Kuramanime Web Player (Fallback)",

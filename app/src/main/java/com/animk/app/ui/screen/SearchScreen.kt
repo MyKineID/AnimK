@@ -24,9 +24,7 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.animk.app.data.model.MediaItem
 import com.animk.app.data.network.AniListApiService
-import com.animk.app.data.scraper.DonghuaScraper
-import com.animk.app.data.scraper.DrakorScraper
-import com.animk.app.data.scraper.KuramanimeScraper
+import com.animk.app.data.repository.ScraperRepository
 import com.animk.app.ui.theme.LocalCustomColors
 import kotlinx.coroutines.launch
 
@@ -43,9 +41,7 @@ fun SearchScreen(
     var isSearching by remember { mutableStateOf(false) }
 
     val aniListService = remember { AniListApiService() }
-    val kuramaScraper = remember { KuramanimeScraper() }
-    val donghuaScraper = remember { DonghuaScraper() }
-    val drakorScraper = remember { DrakorScraper() }
+    val scraperRepo = remember { ScraperRepository() }
 
     fun performSearch(query: String) {
         if (query.isBlank()) return
@@ -55,9 +51,7 @@ fun SearchScreen(
                 val results = mutableListOf<MediaItem>()
                 results.addAll(aniListService.searchAnime(query))
                 if (results.isEmpty()) {
-                    results.addAll(kuramaScraper.search(query))
-                    results.addAll(donghuaScraper.search(query))
-                    results.addAll(drakorScraper.search(query))
+                    results.addAll(scraperRepo.searchAll(query))
                 }
                 searchResults = results.distinctBy { it.title }
             } catch (e: Exception) {

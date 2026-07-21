@@ -1,0 +1,135 @@
+package com.animk.app.data.remoteconfig
+
+import android.content.Context
+import android.util.Log
+import com.animk.app.data.network.OkHttpClientBuilder
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import okhttp3.Request
+
+/**
+ * Singleton manager for remote Director config.
+ * Fetches provider configuration from VPS, caches locally, and provides
+ * fallback when network is unavailable.
+ */
+object DirectorConfigProvider {
+    private const val PREF_NAME = "animk_director_config"
+    private const val KEY_CONFIG_JSON = "config_json"
+    private const val DIRECTOR_URL = "http://209.17.118.146:3050/api/v1/config"
+
+    private val json = Json {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
+    }
+
+    private var prefs: android.content.SharedPreferences? = null
+    private var memoryConfig: DirectorConfig? = null
+    private var currentSource: String = "none"
+
+    fun init(context: Context) {
+        prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+    }
+
+    /**
+     * Returns the active DirectorConfig.
+     *
+     * Priority:
+     * 1. Network fetch (fresh from VPS)
+     * 2. Cached JSON in SharedPreferences
+     * 3. Built-in minimal fallback
+     */
+    suspend fun getConfig(forceRefresh: Boolean = false): DirectorConfig {
+        if (!forceRefresh && memoryConfig != null) {
+            return memoryConfig!!
+        }
+
+        return try {
+            val config = fetchFromNetwork()
+            cacheConfig(config)
+            memoryConfig = config
+            currentSource = "network"
+            logSource()
+            config
+        } catch (e: Exception) {
+            val cached = getCachedConfig()
+            if (cached != null) {
+                memoryConfig = cached
+                currentSource = "cache"
+                logSource()
+                return cached
+            }
+            val fallback = getFallbackConfig()
+            memoryConfig = fallback
+            currentSource = "fallback"
+            logSource()
+            fallback
+        }
+    }
+
+    /**
+     * Returns active providers sorted by priority (ascending).
+     * Only providers with `active == true` are included.
+     */
+    suspend fun getActiveProviders(): List<Pair<String, ProviderConfig>> = withContext(Dispatchers.Default) {
+        val config = getConfig()
+        config.providers
+            .filter { it.value.active && it.value.domain.isNotBlank() }
+            .sortedBy { it.value.priority }
+    }
+
+    val configSource: String get() = currentSource
+
+    private suspend fun fetchFromNetwork(): DirectorConfig = withContext(Dispatchers.IO) {
+        val client = OkHttpClientBuilder.buildUnsafeClient()
+        val request = Request.Builder()
+            .url(DIRECTOR_URL)
+            .header("User-Agent", "AnimK/1.0")
+            .build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: throw Exception("Empty response from Director")
+        json.decodeFromString<DirectorConfig>(body)
+    }
+
+    private fun cacheConfig(config: DirectorConfig) {
+        try {
+            val jsonStr = json.encodeToString(DirectorConfig.serializer(), config)
+            prefs?.edit()?.putString(KEY_CONFIG_JSON, jsonStr)?.apply()
+        } catch (e: Exception) {
+            Log.w("DirectorConfig", "Failed to cache config", e)
+        }
+    }
+
+    private fun getCachedConfig(): DirectorConfig? {
+        return try {
+            val jsonStr = prefs?.getString(KEY_CONFIG_JSON, null) ?: return null
+            json.decodeFromString<DirectorConfig>(jsonStr)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun getFallbackConfig(): DirectorConfig {
+        return DirectorConfig(
+            providers = mapOf(
+                "otakudesu" to ProviderConfig(
+                    active = true,
+                    priority = 1,
+                    domain = "https://otakudesu.blog",
+                    searchPath = "/?s=",
+                    selectors = ProviderSelectors(
+                        list = ".venz ul li",
+                        title = "h2",
+                        link = "a",
+                        image = "img"
+                    )
+                )
+            )
+        )
+    }
+
+    private fun logSource() {
+        Log.i("DirectorConfig", "source=$currentSource, version=${memoryConfig?.version ?: "?"}, " +
+                "providers=${memoryConfig?.providers?.size ?: 0}")
+    }
+}

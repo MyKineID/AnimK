@@ -2,33 +2,35 @@ package com.animk.app.data.repository
 
 import com.animk.app.data.model.Episode
 import com.animk.app.data.model.StreamData
-import com.animk.app.data.scraper.*
+import com.animk.app.data.remoteconfig.ProviderConfig
+import com.animk.app.data.scraper.SourceRegistry
+import com.animk.app.data.remoteconfig.DirectorConfigProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
  * Bridges AniList metadata → Scraper episode lists → Multi-server Stream URLs.
+ *
+ * Uses remote Director config to determine which providers are active
+ * and in which priority order they should be tried.
+ * No domain/selector is hardcoded here.
  */
 class ScraperRepository {
-    private val kurama = KuramanimeScraper()
-    private val samehadaku = SamehadakuScraper()
-    private val otakudesu = OtakudesuScraper()
-    private val donghua = DonghuaScraper()
-    private val drakor = DrakorScraper()
-
-    private val allScrapers: List<BaseScraper> = listOf(kurama, samehadaku, otakudesu, donghua, drakor)
 
     /**
-     * Search anime title on all scrapers, find a match, then fetch its episode list.
+     * Search anime title on all active (config) providers, find a match, then fetch its episode list.
      * Returns a list of real Episode objects with source URLs.
      */
     suspend fun fetchEpisodesForTitle(title: String): List<Episode> = withContext(Dispatchers.IO) {
-        for (scraper in allScrapers) {
+        val activeProviders = DirectorConfigProvider.getActiveProviders()
+
+        for ((key, config) in activeProviders) {
+            val scraper = SourceRegistry.getSource(key) ?: continue
             try {
-                val searchResults = scraper.search(title)
+                val searchResults = scraper.search(title, config)
                 if (searchResults.isNotEmpty()) {
                     val bestMatch = searchResults.first()
-                    val episodes = scraper.getEpisodes(bestMatch.id)
+                    val episodes = scraper.getEpisodes(bestMatch.id, config)
                     if (episodes.size > 1) {
                         return@withContext episodes
                     }
@@ -45,17 +47,19 @@ class ScraperRepository {
 
     /**
      * Get ALL available stream URLs for an episode.
-     * Tries the primary scraper for that URL, plus searches other scrapers for additional stream servers!
+     * Tries all active providers from config, searching each for streams.
      */
     suspend fun fetchStreamsForEpisode(episodeUrl: String, animeTitle: String = ""): List<StreamData> = withContext(Dispatchers.IO) {
         val resultStreams = mutableListOf<StreamData>()
         val addedUrls = mutableSetOf<String>()
+        val activeProviders = DirectorConfigProvider.getActiveProviders()
 
-        // 1. First, fetch from matching scraper if episodeUrl is a direct HTTP URL
+        // 1. First, try each active provider with the direct episode URL
         if (episodeUrl.startsWith("http")) {
-            for (scraper in allScrapers) {
+            for ((key, config) in activeProviders) {
+                val scraper = SourceRegistry.getSource(key) ?: continue
                 try {
-                    val streams = scraper.getStreams(episodeUrl)
+                    val streams = scraper.getStreams(episodeUrl, config)
                     for (st in streams) {
                         if (addedUrls.add(st.streamUrl)) {
                             resultStreams.add(st)
@@ -67,16 +71,18 @@ class ScraperRepository {
             }
         }
 
-        // 2. If resultStreams is empty or small, search animeTitle across other scrapers to get more server options
+        // 2. If few streams found, try searching by title on other active providers
         if (animeTitle.isNotBlank() && resultStreams.size < 3) {
-            for (scraper in allScrapers) {
+            for ((key, config) in activeProviders) {
+                val scraper = SourceRegistry.getSource(key) ?: continue
                 try {
-                    val searchResults = scraper.search(animeTitle)
+                    val searchResults = scraper.search(animeTitle, config)
                     if (searchResults.isNotEmpty()) {
                         val firstMatch = searchResults.first()
-                        val eps = scraper.getEpisodes(firstMatch.id)
-                        val matchingEp = eps.firstOrNull() ?: Episode(id = firstMatch.id, sourceUrl = firstMatch.id, episodeNumber = 1f, title = "Ep 1")
-                        val streams = scraper.getStreams(matchingEp.sourceUrl)
+                        val eps = scraper.getEpisodes(firstMatch.id, config)
+                        val matchingEp = eps.firstOrNull()
+                            ?: Episode(id = firstMatch.id, sourceUrl = firstMatch.id, episodeNumber = 1f, title = "Ep 1")
+                        val streams = scraper.getStreams(matchingEp.sourceUrl, config)
                         for (st in streams) {
                             if (addedUrls.add(st.streamUrl)) {
                                 resultStreams.add(st)
@@ -90,5 +96,40 @@ class ScraperRepository {
         }
 
         resultStreams
+    }
+
+    // ── Convenience methods for backward compatibility ──────────
+
+    /** Search across all active providers. Used by SearchScreen. */
+    suspend fun searchAll(query: String): List<com.animk.app.data.model.MediaItem> = withContext(Dispatchers.IO) {
+        val results = mutableListOf<com.animk.app.data.model.MediaItem>()
+        val activeProviders = DirectorConfigProvider.getActiveProviders()
+
+        for ((key, config) in activeProviders) {
+            val scraper = SourceRegistry.getSource(key) ?: continue
+            try {
+                results.addAll(scraper.search(query, config))
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        results.distinctBy { it.title }
+    }
+
+    /** Search by type (anime, donghua, drakor) using active config providers. */
+    suspend fun searchByType(query: String, type: com.animk.app.data.model.MediaType): List<com.animk.app.data.model.MediaItem> = withContext(Dispatchers.IO) {
+        val results = mutableListOf<com.animk.app.data.model.MediaItem>()
+        val activeProviders = DirectorConfigProvider.getActiveProviders()
+
+        for ((key, config) in activeProviders) {
+            val scraper = SourceRegistry.getSource(key) ?: continue
+            try {
+                val items = scraper.search(query, config)
+                results.addAll(items.filter { it.type == type })
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        results.distinctBy { it.title }
     }
 }

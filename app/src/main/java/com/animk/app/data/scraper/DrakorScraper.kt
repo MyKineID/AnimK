@@ -2,31 +2,38 @@ package com.animk.app.data.scraper
 
 import com.animk.app.data.model.*
 import com.animk.app.data.network.OkHttpClientBuilder
+import com.animk.app.data.remoteconfig.ProviderConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import org.jsoup.Jsoup
+import java.net.URLEncoder
 
 class DrakorScraper : BaseScraper {
     override val sourceName: String = "JuraganFilm"
-    override val baseUrl: String = "https://juraganfilm.vip"
+    override val sourceKey: String = "drakor"
     private val client = OkHttpClientBuilder.buildUnsafeClient()
 
-    override suspend fun search(query: String): List<MediaItem> = withContext(Dispatchers.IO) {
+    override suspend fun search(query: String, config: ProviderConfig): List<MediaItem> = withContext(Dispatchers.IO) {
         val list = mutableListOf<MediaItem>()
         try {
-            val url = "$baseUrl/?s=$query"
+            val url = config.domain.trimEnd('/') + config.searchPath + URLEncoder.encode(query, "UTF-8")
             val request = Request.Builder().url(url).build()
             val response = client.newCall(request).execute()
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            val items = doc.select(".item, article")
+            val selList = config.selectors.list.ifEmpty { ".item, article" }
+            val selTitle = config.selectors.title.ifEmpty { "h2, .entry-title, .title" }
+            val selLink = config.selectors.link.ifEmpty { "a[href]" }
+            val selImage = config.selectors.image.ifEmpty { "img" }
+
+            val items = doc.select(selList)
             for (element in items) {
-                val linkEl = element.selectFirst("a[href]")
+                val linkEl = element.selectFirst(selLink)
                 val mediaUrl = linkEl?.attr("abs:href") ?: ""
-                val title = element.select("h2, .entry-title, .title").text()
-                val posterUrl = element.select("img").attr("src")
+                val title = element.select(selTitle).text()
+                val posterUrl = element.select(selImage).attr("src")
 
                 if (title.isNotBlank() && mediaUrl.isNotBlank()) {
                     list.add(
@@ -48,7 +55,7 @@ class DrakorScraper : BaseScraper {
         list
     }
 
-    override suspend fun getEpisodes(mediaUrl: String): List<Episode> = withContext(Dispatchers.IO) {
+    override suspend fun getEpisodes(mediaUrl: String, config: ProviderConfig): List<Episode> = withContext(Dispatchers.IO) {
         val episodes = mutableListOf<Episode>()
         try {
             val request = Request.Builder().url(mediaUrl).build()
@@ -56,7 +63,8 @@ class DrakorScraper : BaseScraper {
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            val epElements = doc.select(".episodelist ul li a, a[href*='/episode/']")
+            val epSelector = config.selectors.episodeLink.ifEmpty { ".episodelist ul li a, a[href*='/episode/']" }
+            val epElements = doc.select(epSelector)
             var count = 1f
             for (el in epElements) {
                 val epUrl = el.attr("abs:href")
@@ -82,7 +90,7 @@ class DrakorScraper : BaseScraper {
         episodes
     }
 
-    override suspend fun getStreams(episodeUrl: String): List<StreamData> = withContext(Dispatchers.IO) {
+    override suspend fun getStreams(episodeUrl: String, config: ProviderConfig): List<StreamData> = withContext(Dispatchers.IO) {
         val streams = mutableListOf<StreamData>()
         val addedUrls = mutableSetOf<String>()
 
@@ -95,7 +103,9 @@ class DrakorScraper : BaseScraper {
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            val playerAreaIframes = doc.select(".player-area iframe[src], #player-option iframe[src], iframe[data-src]")
+            val playerAreaIframes = doc.select(
+                config.selectors.streamIframe.ifEmpty { ".player-area iframe[src], #player-option iframe[src], iframe[data-src]" }
+            )
             for (iframe in playerAreaIframes) {
                 val src = iframe.attr("abs:src").ifEmpty { iframe.attr("abs:data-src") }
                 if (src.isNotBlank() && !src.startsWith("about:") && addedUrls.add(src)) {
@@ -128,7 +138,6 @@ class DrakorScraper : BaseScraper {
                 }
             }
 
-            // Fallback Full Page Player
             if (addedUrls.add(episodeUrl)) {
                 streams.add(
                     StreamData(

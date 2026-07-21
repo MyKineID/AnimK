@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.*
+import com.animk.app.data.remoteconfig.DirectorConfigProvider
 import com.animk.app.ui.screen.MainScreen
 import com.animk.app.ui.theme.AppThemeAccent
 import com.animk.app.ui.theme.AnimKTheme
@@ -15,6 +16,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         enableMaxRefreshRate()
+        DirectorConfigProvider.init(this)
 
         setContent {
             var activeThemeAccent by remember { mutableStateOf(AppThemeAccent.NEON_GECKO) }
