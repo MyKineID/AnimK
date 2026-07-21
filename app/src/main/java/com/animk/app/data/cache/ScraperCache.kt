@@ -37,12 +37,12 @@ object ScraperCache {
         put("episodes_${key(title)}", json.encodeToString(episodes))
     }
 
-    fun getStreams(episodeUrl: String): List<StreamData>? = get("streams_${key(episodeUrl)}", STREAM_TTL_MS) {
+    fun getStreams(episodeUrl: String): List<StreamData>? = get("streams_v2_${key(episodeUrl)}", STREAM_TTL_MS) {
         json.decodeFromString<List<StreamData>>(it)
     }
 
     fun putStreams(episodeUrl: String, streams: List<StreamData>) {
-        put("streams_${key(episodeUrl)}", json.encodeToString(streams))
+        put("streams_v2_${key(episodeUrl)}", json.encodeToString(streams))
     }
 
     private fun <T> get(key: String, ttlMs: Long, decode: (String) -> T): T? {

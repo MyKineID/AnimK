@@ -9,6 +9,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.FormBody
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -141,12 +143,13 @@ class OtakudesuScraper : BaseScraper {
                     try {
                         val decoded = String(Base64.decode(b64, Base64.DEFAULT), Charsets.UTF_8)
                         if (decoded.startsWith("http") && addedUrls.add(decoded)) {
-                            val resolvedUrl = resolveDesustreamUrl(decoded)
-                            streams.add(StreamData(
-                                serverName = el.text().ifEmpty { "OtakuStream ${streams.size + 1}" },
-                                streamUrl = resolvedUrl, isIframe = !isDirectVideoUrl(resolvedUrl),
-                                resolution = StreamResolution.HD_720p, priority = ServerPriority.HIGH,
-                                additionalHeaders = if (decoded.contains("desustream", true)) mapOf("Referer" to decoded) else emptyMap()))
+                            val resolvedUrl = resolvePlayableUrl(decoded)
+                            if (isDirectVideoUrl(resolvedUrl)) {
+                                streams.add(StreamData(
+                                    serverName = el.text().ifEmpty { "OtakuStream ${streams.size + 1}" },
+                                    streamUrl = resolvedUrl, isIframe = false,
+                                    resolution = StreamResolution.HD_720p, priority = ServerPriority.HIGH))
+                            }
                         }
                     } catch (_: Exception) {}
                 }
@@ -157,25 +160,26 @@ class OtakudesuScraper : BaseScraper {
             for (iframe in doc.select(iframeSel)) {
                 val src = iframe.attr("abs:src").ifEmpty { iframe.attr("abs:data-src") }
                 if (src.isNotBlank() && !src.startsWith("about:") && addedUrls.add(src)) {
-                    val resolvedUrl = resolveDesustreamUrl(src)
-                    streams.add(StreamData(
-                        serverName = if (src.contains("desustream", true)) "DesuStream HD" else "Server ${streams.size + 1}",
-                        streamUrl = resolvedUrl,
-                        // blogger.com/video.g is an HTML player page, not an MP4/HLS manifest.
-                        isIframe = !isDirectVideoUrl(resolvedUrl),
-                        resolution = StreamResolution.HD_720p, priority = ServerPriority.HIGH,
-                        // Blogger validates the iframe origin; keep DesuStream as referrer.
-                        additionalHeaders = if (src.contains("desustream", true)) mapOf("Referer" to src) else emptyMap()))
+                    val resolvedUrl = resolvePlayableUrl(src)
+                    if (isDirectVideoUrl(resolvedUrl)) {
+                        streams.add(StreamData(
+                            serverName = if (src.contains("desustream", true)) "DesuStream HD" else "Server ${streams.size + 1}",
+                            streamUrl = resolvedUrl,
+                            isIframe = false,
+                            resolution = StreamResolution.HD_720p,
+                            priority = ServerPriority.HIGH))
+                    }
                 }
             }
 
-            // 3. Fallback episode page
-            if (addedUrls.add(episodeUrl)) {
-                streams.add(StreamData(serverName = "Otakudesu Web Player", streamUrl = episodeUrl, isIframe = true,
-                    resolution = StreamResolution.HD_720p, priority = ServerPriority.LOW))
-            }
         } catch (e: Exception) { e.printStackTrace() }
         streams
+    }
+
+    /** Resolves DesuStream → Blogger → range-enabled Google Video MP4 for Media3. */
+    private fun resolvePlayableUrl(url: String): String {
+        val bloggerUrl = resolveDesustreamUrl(url)
+        return resolveBloggerVideoUrl(bloggerUrl) ?: bloggerUrl
     }
 
     private fun resolveDesustreamUrl(wrapperUrl: String): String {
@@ -185,7 +189,7 @@ class OtakudesuScraper : BaseScraper {
             val separator = if (wrapperUrl.contains('?')) "&" else "?"
             val jsonUrl = "$wrapperUrl${separator}mode=json&_=${System.currentTimeMillis()}"
             client.newCall(Request.Builder().url(jsonUrl)
-                .header("User-Agent", "Mozilla/5.0")
+                .header("User-Agent", PLAYER_USER_AGENT)
                 .header("Referer", wrapperUrl)
                 .build()).execute().use { resp ->
                 val body = resp.body?.string() ?: return@use wrapperUrl
@@ -197,10 +201,74 @@ class OtakudesuScraper : BaseScraper {
         } catch (_: Exception) { wrapperUrl }
     }
 
+    /** Blogger's page is not media. Its WcwnYd RPC returns signed googlevideo MP4 URLs. */
+    private fun resolveBloggerVideoUrl(bloggerUrl: String): String? = try {
+        val token = bloggerUrl.toHttpUrlOrNull()?.queryParameter("token")?.takeIf { it.isNotBlank() }
+            ?: return null
+        val argument = "[\"${token.escapeJson()}\",null,0]"
+        val payload = "[[[\"WcwnYd\",\"${argument.escapeJson()}\",null,\"generic\"]]]"
+        val request = Request.Builder()
+            .url("https://www.blogger.com/_/BloggerVideoPlayerUi/data/batchexecute?rpcids=WcwnYd&source-path=%2Fvideo.g&rt=c")
+            .header("User-Agent", PLAYER_USER_AGENT)
+            .header("Accept", "*/*")
+            .header("Origin", "https://www.blogger.com")
+            .header("Referer", bloggerUrl)
+            .header("X-Same-Domain", "1")
+            .post(FormBody.Builder().add("f.req", payload).build())
+            .build()
+        val body = client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return null
+            response.body?.string().orEmpty()
+        }.replace("\\/", "/")
+
+        GOOGLE_VIDEO_REGEX.findAll(body)
+            .map { decodeEscapedUrl(it.value) }
+            .filter { isDirectVideoUrl(it) }
+            .maxByOrNull { qualityHeight(it) }
+    } catch (_: Exception) {
+        null
+    }
+
     private fun isDirectVideoUrl(url: String): Boolean {
         val path = url.substringBefore('?').lowercase(Locale.ROOT)
-        return path.endsWith(".mp4") || path.endsWith(".m3u8") ||
-            path.endsWith(".webm") || path.endsWith(".mkv")
+        return path.endsWith(".mp4") || path.endsWith(".m3u8") || path.endsWith(".webm") ||
+            path.endsWith(".mkv") || url.contains("googlevideo.com/videoplayback", true) ||
+            url.contains("mime=video%2fmp4", true) || url.contains("mime=video/mp4", true)
+    }
+
+    private fun qualityHeight(url: String): Int = when (url.toHttpUrlOrNull()?.queryParameter("itag")?.toIntOrNull()) {
+        37, 137 -> 1080
+        22, 136 -> 720
+        35, 59, 135 -> 480
+        18, 34, 134 -> 360
+        else -> 0
+    }
+
+    private fun decodeEscapedUrl(value: String): String {
+        var result = value.trimEnd('\\')
+        repeat(3) {
+            result = ESCAPED_UNICODE_REGEX.replace(result) { it.groupValues[1].toInt(16).toChar().toString() }
+                .replace("\\/", "/")
+                .replace("\\\\", "\\")
+        }
+        return result.trimEnd('\\')
+    }
+
+    private fun String.escapeJson(): String = buildString(length + 8) {
+        for (character in this@escapeJson) when (character) {
+            '\\' -> append("\\\\")
+            '"' -> append("\\\"")
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            '\t' -> append("\\t")
+            else -> append(character)
+        }
+    }
+
+    private companion object {
+        const val PLAYER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36"
+        val GOOGLE_VIDEO_REGEX = Regex("""https://[^"\s]+googlevideo\.com/videoplayback[^"\s]+""", RegexOption.IGNORE_CASE)
+        val ESCAPED_UNICODE_REGEX = Regex("""\\+u([0-9a-fA-F]{4})""")
     }
 
     /** Extract anime title from detail page. */

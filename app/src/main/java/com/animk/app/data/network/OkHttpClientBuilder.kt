@@ -25,8 +25,11 @@ object OkHttpClientBuilder {
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .addInterceptor { chain ->
-                val request = chain.request().newBuilder()
-                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                val original = chain.request()
+                val request = original.newBuilder()
+                    // Preserve provider-specific UAs (Blogger signs direct video URLs for them).
+                    .header("User-Agent", original.header("User-Agent")
+                        ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                     .build()
                 chain.proceed(request)
             }

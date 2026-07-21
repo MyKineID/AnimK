@@ -44,7 +44,9 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem as ExoMediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
@@ -54,6 +56,9 @@ import com.animk.app.data.playback.WatchHistoryStore
 import com.animk.app.data.repository.ScraperRepository
 import com.animk.app.ui.theme.LocalCustomColors
 import kotlinx.coroutines.delay
+
+private const val BLOGGER_PLAYER_USER_AGENT =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/115.0.0.0 Safari/537.36"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -149,10 +154,12 @@ fun NetflixMediaPlayerScreen(
             playError = false
             resumePositionMs = WatchHistoryStore.positionFor(episodeSourceUrl)
             hasRestoredPosition = false
-            // ExoPlayer can only play media manifests/files. Blogger's video.g is an
-            // HTML player, therefore it must stay in WebView.
-            useWebView = stream.isIframe
-            if (!stream.isIframe) {
+            // Provider pages are never rendered in the app. Only direct media URLs
+            // are accepted so playback and controls always remain in AnimK's player.
+            useWebView = false
+            if (stream.isIframe) {
+                playError = true
+            } else {
                 exoPlayer?.apply {
                     stop()
                     setMediaItem(ExoMediaItem.fromUri(stream.streamUrl))
@@ -316,7 +323,15 @@ fun NetflixMediaPlayerScreen(
                 AndroidView(
                     factory = { ctx ->
                         PlayerView(ctx).apply {
+                            val dataSourceFactory = DefaultHttpDataSource.Factory()
+                                // Must match the UA used while resolving Blogger's signed URL.
+                                .setUserAgent(BLOGGER_PLAYER_USER_AGENT)
+                                .setDefaultRequestProperties(activeStream?.additionalHeaders ?: emptyMap())
+                                .setAllowCrossProtocolRedirects(true)
                             val player = ExoPlayer.Builder(ctx)
+                                .setMediaSourceFactory(
+                                    DefaultMediaSourceFactory(ctx).setDataSourceFactory(dataSourceFactory)
+                                )
                                 .setSeekBackIncrementMs(10000)
                                 .setSeekForwardIncrementMs(10000)
                                 .build()
@@ -332,9 +347,7 @@ fun NetflixMediaPlayerScreen(
                                     isPlaying = playing
                                 }
                                 override fun onPlayerError(error: PlaybackException) {
-                                    // A server can expose an HTML player behind a URL. Retry it
-                                    // in WebView rather than showing an immediate hard failure.
-                                    useWebView = true
+                                    playError = true
                                 }
                             })
 
@@ -377,15 +390,13 @@ fun NetflixMediaPlayerScreen(
                         Spacer(Modifier.height(8.dp))
                         Text("Video playback error", color = Color.White, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Button(onClick = { playError = false; useWebView = true }, colors = ButtonDefaults.buttonColors(containerColor = custom.primary)) {
-                                Text("Open in WebView")
-                            }
-                            Button(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(activeStream?.streamUrl))) },
-                                colors = ButtonDefaults.buttonColors(containerColor = custom.primary.copy(alpha = 0.7f))) {
-                                Text("Open Browser")
-                            }
-                        }
+                        Button(
+                            onClick = {
+                                playError = false
+                                exoPlayer?.apply { stop(); prepare(); playWhenReady = true }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = custom.primary)
+                        ) { Text("Retry Custom Player") }
                     }
                 }
             }
@@ -485,10 +496,10 @@ fun NetflixMediaPlayerScreen(
                                     Text(if (playbackSpeed == 1.0f) "1.0x" else "${playbackSpeed}x", color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Bold)
                                 }
                             }
-                            TextButton(onClick = { useWebView = !useWebView }) {
-                                Icon(Icons.Filled.Language, contentDescription = null, tint = custom.primary.copy(alpha = 0.8f))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Filled.PlayCircle, contentDescription = null, tint = custom.primary.copy(alpha = 0.8f))
                                 Spacer(Modifier.width(4.dp))
-                                Text(if (useWebView) "WebView aktif" else "ExoPlayer aktif", color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Bold)
+                                Text("Custom Player", color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Bold)
                             }
                         }
                     }
