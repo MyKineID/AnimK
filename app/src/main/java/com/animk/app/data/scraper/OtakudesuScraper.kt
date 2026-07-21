@@ -10,6 +10,12 @@ import okhttp3.Request
 import org.jsoup.Jsoup
 import java.net.URLEncoder
 
+/**
+ * Otakudesu scraper.
+ *
+ * NOTE: Otakudesu search page is JavaScript-rendered and cannot be parsed by Jsoup.
+ * Instead, search uses the ongoing page (`/ongoing-anime/`) which is static HTML.
+ */
 class OtakudesuScraper : BaseScraper {
     override val sourceName: String = "Otakudesu"
     override val sourceKey: String = "otakudesu"
@@ -18,36 +24,48 @@ class OtakudesuScraper : BaseScraper {
     override suspend fun search(query: String, config: ProviderConfig): List<MediaItem> = withContext(Dispatchers.IO) {
         val list = mutableListOf<MediaItem>()
         try {
-            val url = config.domain.trimEnd('/') + config.searchPath + URLEncoder.encode(query, "UTF-8")
-            val request = Request.Builder().url(url).build()
+            // Otakudesu search page is JS-rendered. Use ongoing page for static HTML.
+            val domain = config.domain.trimEnd('/')
+            val ongoingUrl = "$domain/ongoing-anime/"
+
+            val request = Request.Builder()
+                .url(ongoingUrl)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .build()
             val response = client.newCall(request).execute()
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            val selList = config.selectors.list.ifEmpty { "ul.chlist li, ul.chibi li" }
-            val selTitle = config.selectors.title.ifEmpty { "a" }
-            val selLink = config.selectors.link.ifEmpty { "a[href]" }
-            val selImage = config.selectors.image.ifEmpty { "img" }
-
-            val items = doc.select(selList)
+            // Otakudesu ongoing page structure:
+            // <div class="venz"><ul><li><div class='detpost'>
+            //   <div class="thumb"><a href="..."><div class="thumbz">
+            //     <img src="..." /><h2 class="jdlflm">Title</h2>
+            val items = doc.select(".venz ul li .detpost")
             for (element in items) {
-                val linkEl = element.selectFirst(selLink)
+                val titleEl = element.selectFirst(".jdlflm")
+                val title = titleEl?.text()?.trim() ?: continue
+                val linkEl = element.selectFirst(".thumb a[href]")
                 val mediaUrl = linkEl?.attr("abs:href") ?: ""
-                val title = element.select(selTitle).text()
-                val posterUrl = element.select(selImage).attr("src")
+                val imgEl = element.selectFirst(".thumbz img")
+                val posterUrl = imgEl?.attr("abs:src") ?: imgEl?.attr("abs:data-src") ?: ""
+                val epEl = element.selectFirst(".epz")
+                val episodeCount = epEl?.text()?.trim() ?: ""
 
                 if (title.isNotBlank() && mediaUrl.isNotBlank()) {
-                    list.add(
-                        MediaItem(
-                            id = mediaUrl,
-                            title = title,
-                            type = MediaType.ANIME,
-                            posterUrl = posterUrl.ifEmpty { "https://picsum.photos/300/450" },
-                            backdropUrl = posterUrl,
-                            description = "Otakudesu stream source",
-                            genres = listOf("Action", "Anime")
+                    // Case-insensitive fuzzy match
+                    if (title.contains(query, ignoreCase = true) || query.contains(title, ignoreCase = true)) {
+                        list.add(
+                            MediaItem(
+                                id = mediaUrl,
+                                title = title,
+                                type = MediaType.ANIME,
+                                posterUrl = posterUrl.ifEmpty { "https://picsum.photos/300/450" },
+                                backdropUrl = posterUrl,
+                                description = "Otakudesu stream source",
+                                genres = listOf("Action", "Anime")
+                            )
                         )
-                    )
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -59,13 +77,17 @@ class OtakudesuScraper : BaseScraper {
     override suspend fun getEpisodes(mediaUrl: String, config: ProviderConfig): List<Episode> = withContext(Dispatchers.IO) {
         val episodes = mutableListOf<Episode>()
         try {
-            val request = Request.Builder().url(mediaUrl).build()
+            val request = Request.Builder()
+                .url(mediaUrl)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .build()
             val response = client.newCall(request).execute()
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            val epSelector = config.selectors.episodeLink.ifEmpty { "ul li a[href*='/episode/']" }
-            val epElements = doc.select(epSelector)
+            // Otakudesu detail page episodes are links with /episode/ in the URL
+            // Inside <div class="episodelist">
+            val epElements = doc.select("a[href*='/episode/']")
             var count = 1f
             for (el in epElements) {
                 val epUrl = el.attr("abs:href")
@@ -104,7 +126,7 @@ class OtakudesuScraper : BaseScraper {
             val html = response.body?.string() ?: return@withContext emptyList()
             val doc = Jsoup.parse(html)
 
-            // 1. Base64 Decoded Stream Elements
+            // 1. Base64 Decoded Stream Elements (otakudesu-specific)
             val elements = doc.select("[data-content]")
             for (el in elements) {
                 val base64Content = el.attr("data-content")
@@ -130,19 +152,25 @@ class OtakudesuScraper : BaseScraper {
                 }
             }
 
-            // 2. Direct Iframes
-            val iframeSel = config.selectors.streamIframe.ifEmpty { "iframe[src], iframe[data-src], #embed_holder iframe" }
+            // 2. Direct Iframes (desustream.info etc.)
+            val iframeSel = config.selectors.streamIframe.ifEmpty { "iframe[src]" }
             val iframes = doc.select(iframeSel)
             for (iframe in iframes) {
                 val src = iframe.attr("abs:src").ifEmpty { iframe.attr("abs:data-src") }
                 if (src.isNotBlank() && !src.startsWith("about:") && addedUrls.add(src)) {
+                    val serverLabel = when {
+                        src.contains("desustream", ignoreCase = true) -> "DesuStream HD"
+                        src.contains("otaku", ignoreCase = true) -> "Otaku Server"
+                        src.contains("stream", ignoreCase = true) -> "Stream ${streams.size + 1}"
+                        else -> "Server ${streams.size + 1}"
+                    }
                     streams.add(
                         StreamData(
-                            serverName = "Otaku Mirror ${streams.size + 1}",
+                            serverName = serverLabel,
                             streamUrl = src,
                             isIframe = true,
-                            resolution = StreamResolution.SD_480p,
-                            priority = ServerPriority.MEDIUM
+                            resolution = StreamResolution.HD_720p,
+                            priority = ServerPriority.HIGH
                         )
                     )
                 }
@@ -155,7 +183,7 @@ class OtakudesuScraper : BaseScraper {
                         serverName = "Otakudesu Web Player (Full Page)",
                         streamUrl = episodeUrl,
                         isIframe = true,
-                        resolution = StreamResolution.SD_480p,
+                        resolution = StreamResolution.HD_720p,
                         priority = ServerPriority.LOW
                     )
                 )
@@ -167,7 +195,7 @@ class OtakudesuScraper : BaseScraper {
                     serverName = "Otakudesu Web Player (Fallback)",
                     streamUrl = episodeUrl,
                     isIframe = true,
-                    resolution = StreamResolution.SD_480p,
+                    resolution = StreamResolution.HD_720p,
                     priority = ServerPriority.LOW
                 )
             )
